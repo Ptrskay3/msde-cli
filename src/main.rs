@@ -56,11 +56,21 @@ struct Command {
     #[arg(short, long)]
     no_build_cache: bool,
 
-    #[arg(short, long)]
-    token: Option<Secret<String>>,
-
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+impl Command {
+    fn should_ignore_credentials(&self) -> bool {
+        if let Some(command) = &self.command {
+            matches!(
+                command,
+                Commands::BuildCache { .. } | Commands::Login { .. } | Commands::Containers { .. }
+            )
+        } else {
+            true
+        }
+    }
 }
 
 const LATEST: &str = "latest";
@@ -102,6 +112,7 @@ fn login(
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(".msde").context("Failed to create cache directory")?;
     if let Some(path_buf) = file {
+        // TODO: Maybe open it, and check whether this file makes sense?
         std::fs::copy(path_buf, ".msde/credentials.json")?;
     } else {
         let ghcr_key = ghcr_key.context("ghrc-key is required")?;
@@ -194,7 +205,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "docker_api=trace,msde_cli=trace".into()),
+                .unwrap_or_else(|_| "msde_cli=trace".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -208,14 +219,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
 
     if !&cmd.no_build_cache {
-        match (&cmd.command, std::fs::File::open(".msde/index.json")) {
-            (
-                Some(Commands::BuildCache { .. })
-                | Some(Commands::Login { .. })
-                | Some(Commands::Containers { .. })
-                | None,
-                _,
-            ) => {}
+        match (
+            &cmd.should_ignore_credentials(),
+            std::fs::File::open(".msde/index.json"),
+        ) {
+            (true, _) => {}
             (_, Ok(content)) => {
                 let reader = BufReader::new(content);
                 let index: Index = serde_json::from_reader(reader)?;

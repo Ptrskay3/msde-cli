@@ -371,6 +371,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("kernel version: {}", sys.kernel_version().unwrap());
             println!("OS version    : {}", sys.os_version().unwrap());
             println!("host name     : {}", sys.host_name().unwrap());
+            println!(
+                "Docker version: {}",
+                docker.version().await.unwrap().version.unwrap()
+            );
 
             let opts = docker_api::opts::ImageListOpts::default();
             let docker_images = docker.images().list(&opts).await?;

@@ -39,8 +39,7 @@ struct Index {
 
 impl ParsedMetadataResponse {
     fn for_target(&self, target: &Target) -> bool {
-        // TODO: Unnecessary alloc, also, web3 kind of doesn't work yet
-        self.image.starts_with(&target.to_string())
+        self.image.starts_with(target.as_ref())
     }
 
     fn contains_version(&self, version: &str) -> bool {
@@ -62,14 +61,12 @@ struct Command {
 
 impl Command {
     fn should_ignore_credentials(&self) -> bool {
-        if let Some(command) = &self.command {
-            matches!(
-                command,
-                Commands::BuildCache { .. } | Commands::Login { .. } | Commands::Containers { .. }
-            )
-        } else {
-            true
-        }
+        matches!(
+            self.command,
+            None | Some(Commands::BuildCache { .. })
+                | Some(Commands::Login { .. })
+                | Some(Commands::Containers { .. })
+        )
     }
 }
 
@@ -220,7 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !&cmd.no_build_cache {
         match (
-            &cmd.should_ignore_credentials(),
+            cmd.should_ignore_credentials(),
             std::fs::File::open(".msde/index.json"),
         ) {
             (true, _) => {}
@@ -259,8 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!(
                 "available versions for `{}` are {:?}",
-                target.to_string(),
-                entry.parsed_versions
+                target, entry.parsed_versions
             );
         }
         Some(Commands::BuildCache { duration }) => {
@@ -449,10 +445,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            println!(
-                "Available local Merigo related images are:\n{:#?}",
-                local_image_stats
-            );
+            println!("Available local Merigo related images are:\n{local_image_stats:#?}");
         }
         _ => tracing::debug!("not now.."),
     }
@@ -489,7 +482,6 @@ enum Commands {
         target: Option<Target>,
     },
     Stop,
-
     Start,
     Down,
     Log {
@@ -563,10 +555,10 @@ enum Web3Kind {
 impl Target {
     fn get_version(&self) -> Option<&String> {
         match self {
-            Target::Msde { version } => version.as_ref(),
-            Target::Bot { version } => version.as_ref(),
-            Target::Web3 { version, .. } => version.as_ref(),
-            Target::Compiler { version } => version.as_ref(),
+            Target::Msde { version }
+            | Target::Bot { version }
+            | Target::Web3 { version, .. }
+            | Target::Compiler { version } => version.as_ref(),
         }
     }
 
@@ -586,18 +578,20 @@ impl Target {
             }
             Target::Web3 { version, .. } => {
                 let tag = match version {
-                    Some(version) => format!("{version}"),
+                    Some(version) => version.to_string(),
                     None => LATEST.to_owned(),
                 };
                 tracing::debug!(%tag, "assembled tag is");
 
                 vec![
                     (
-                        format!("docker.pkg.github.com/merigo-co/web3_services/web3_services_dev"),
+                        "docker.pkg.github.com/merigo-co/web3_services/web3_services_dev"
+                            .to_string(),
                         tag.clone(),
                     ),
                     (
-                        format!("docker.pkg.github.com/merigo-co/web3_services/web3_consumer_dev"),
+                        "docker.pkg.github.com/merigo-co/web3_services/web3_consumer_dev"
+                            .to_string(),
                         tag,
                     ),
                 ]
@@ -606,6 +600,7 @@ impl Target {
     }
 }
 
+// FIXME: These just discard the version information.. not really intuitive
 impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let repr = match self {
@@ -616,6 +611,17 @@ impl std::fmt::Display for Target {
         };
 
         write!(f, "{repr}")
+    }
+}
+
+impl AsRef<str> for Target {
+    fn as_ref(&self) -> &str {
+        match self {
+            Target::Msde { .. } => "msde",
+            Target::Bot { .. } => "bot",
+            Target::Web3 { .. } => "web3",
+            Target::Compiler { .. } => "compiler",
+        }
     }
 }
 
@@ -654,7 +660,7 @@ async fn pull(
             let entry = index
                 .content
                 .iter()
-                .find(|metadata| metadata.for_target(&target))
+                .find(|metadata| metadata.for_target(target))
                 .unwrap();
             if !entry.contains_version(version) {
                 tracing::warn!(%target, %version, available_versions = ?entry.parsed_versions, "Specified unknown version for target");
@@ -663,7 +669,6 @@ async fn pull(
     }
 
     let images_and_tags = target.images_and_tags();
-    let key = credentials.pull_key.expose_secret();
     for (image, tag) in images_and_tags {
         let opts = docker_api::opts::PullOpts::builder()
             .image(image)
@@ -671,7 +676,7 @@ async fn pull(
             .auth(
                 docker_api::opts::RegistryAuth::builder()
                     .username(USER)
-                    .password(key)
+                    .password(credentials.pull_key.expose_secret())
                     .build(),
             )
             .build();

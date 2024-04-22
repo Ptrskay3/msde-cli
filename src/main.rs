@@ -7,13 +7,15 @@ use std::io::Write;
 use anyhow::Context;
 use clap::ValueEnum;
 use clap::{ArgAction, Parser, Subcommand};
+// May work better!
+// https://github.com/fussybeaver/bollard
 use docker_api::opts::ContainerListOpts;
 use docker_api::opts::ContainerStopOpts;
 use docker_api::Docker;
 use futures::StreamExt;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
-use sysinfo::{System, SystemExt};
+use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -207,7 +209,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::trace!("starting CLI..");
     let cmd = Command::parse();
     tracing::trace!(?cmd, "arguments parsed");
     tracing::trace!("attempting to connect to Docker daemon..");
@@ -363,10 +364,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("CPU           : {}", cpu_info.as_str());
             }
 
-            println!("system name   : {}", sys.name().unwrap());
-            println!("kernel version: {}", sys.kernel_version().unwrap());
-            println!("OS version    : {}", sys.os_version().unwrap());
-            println!("host name     : {}", sys.host_name().unwrap());
+            println!("system name   : {}", sysinfo::System::name().unwrap());
+            println!(
+                "kernel version: {}",
+                sysinfo::System::kernel_version().unwrap()
+            );
+            println!(
+                "OS version    : {}",
+                sysinfo::System::long_os_version().unwrap()
+            );
+            println!("host name     : {}", sysinfo::System::host_name().unwrap());
+            println!("CPU arch      : {}", sysinfo::System::cpu_arch().unwrap());
             println!(
                 "Docker version: {}",
                 docker.version().await.unwrap().version.unwrap()
@@ -663,7 +671,7 @@ async fn pull(
                 .find(|metadata| metadata.for_target(target))
                 .unwrap();
             if !entry.contains_version(version) {
-                tracing::warn!(%target, %version, available_versions = ?entry.parsed_versions, "Specified unknown version for target");
+                tracing::warn!(%target, %version, available_versions = ?entry.parsed_versions.iter(), "Specified unknown version for target");
             }
         }
     }

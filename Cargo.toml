@@ -3,10 +3,11 @@ name = "msde-cli"
 version = "0.1.0"
 edition = "2021"
 description = "CLI tool for running the Merigo Dev package."
+repository = "https://github.com/ptrskay3/msde-cli"
 
 [dependencies]
 clap = { version = "4.4.4", features = ["derive"] }
-sysinfo = "0.29.10"
+sysinfo = "0.30.5"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 docker-api = "0.14"
@@ -16,11 +17,29 @@ futures = "0.3.28"
 anyhow = "1.0.75"
 secrecy = { version = "0.8.0", features = ["serde"] }
 semver = "1.0.19"
-reqwest = { version = "0.11.20", features = ["serde_json", "json"] }
+reqwest = { version = "0.12.3", features = ["json"] }
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
 time = { version = "0.3.29", features = ["serde"] }
 raw-cpuid = "11.0.1"
+
+# The profile that 'cargo dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+# Config for 'cargo dist'
+[workspace.metadata.dist]
+# The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.13.1"
+# The installers to generate for each app
+installers = []
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# CI backends to support
+ci = ["github"]
+# Publish jobs to run in CI
+pr-run-mode = "plan"
 
 [package.metadata.bundle]
 name = "MSDE-CLI"

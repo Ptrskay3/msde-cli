@@ -243,6 +243,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match cmd.command {
+        Some(Commands::Exec { .. }) => {
+            todo!();
+        }
         Some(Commands::Versions { target }) => {
             let file = File::open(".msde/index.json")
                 .context("local cache not found, please omit the `--no-build-cache` flag")?;
@@ -502,6 +505,9 @@ enum Commands {
     },
     Ssh,
     Shell,
+    Exec {
+        cmd: String,
+    },
     /// Checks and stops all running containers.
     Containers {
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]

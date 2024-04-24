@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::ValueEnum;
@@ -199,7 +200,7 @@ async fn create_index(
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
@@ -243,6 +244,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match cmd.command {
+        // TODO: sensible defaults
+        Some(Commands::UpdateBeamFiles {
+            version, no_verify, ..
+        }) => {
+            let version = version.unwrap_or_else(|| semver::Version::parse("3.10.0").unwrap());
+
+            msde_cli::updater::update_beam_files(version.clone(), no_verify).await?;
+            tracing::info!("BEAM files updated to version `{version}`.");
+        }
+        Some(Commands::VerifyBeamFiles { version, path }) => {
+            let version = version.unwrap_or_else(|| semver::Version::parse("3.10.0").unwrap());
+            let path = path.unwrap_or_else(|| {
+                PathBuf::from(
+                    "/home/leehpeter-zengo/work/merigo/docker_dev/package/merigo_extension/priv",
+                )
+            });
+            msde_cli::updater::verify_beam_files(version, path)?;
+            tracing::info!("BEAM files verified.");
+        }
         Some(Commands::Exec { .. }) => {
             todo!();
         }
@@ -507,6 +527,25 @@ enum Commands {
     Shell,
     Exec {
         cmd: String,
+    },
+    /// Verify the integrity of BEAM files.
+    VerifyBeamFiles {
+        #[arg(short, long)]
+        version: Option<semver::Version>,
+
+        #[arg(short, long)]
+        path: Option<std::path::PathBuf>,
+    },
+    /// Verify the integrity of BEAM files.
+    UpdateBeamFiles {
+        #[arg(short, long)]
+        version: Option<semver::Version>,
+
+        #[arg(short, long)]
+        path: Option<std::path::PathBuf>,
+
+        #[arg(long, action = ArgAction::SetTrue)]
+        no_verify: bool,
     },
     /// Checks and stops all running containers.
     Containers {

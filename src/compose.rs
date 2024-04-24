@@ -3,13 +3,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-#[derive(Debug)]
-pub struct Compose {
-    // pub stdin: std::io::Stdin,
-    // pub stdout: std::io::Stdout,
-    // pub stderr: std::io::Stderr,
-    // pub cmd: std::process::Command,
-}
+pub struct Compose;
 
 const CONTENT: &'static str = include_str!("../docker-compose.yml");
 
@@ -35,12 +29,11 @@ impl Compose {
             .args(files)
             .arg("up")
             .args(opts)
-            .spawn()
-            .unwrap();
+            .spawn()?;
 
-        let status = child.wait().expect("Failed to wait for docker-compose");
+        let status = child.wait()?;
         if !status.success() {
-            eprintln!("docker-compose failed with exit code: {}", status);
+            eprintln!("docker compose failed with exit code: {}", status);
         }
 
         Ok(())
@@ -55,19 +48,16 @@ impl Compose {
             .arg("-")
             .arg("up")
             .args(opts)
-            .spawn()
-            .unwrap();
+            .spawn()?;
 
         let Some(mut stdin) = child.stdin.take() else {
             anyhow::bail!("Failed to get stdin for docker-compose")
         };
-        stdin
-            .write_all(CONTENT.as_bytes())
-            .expect("Failed to write to stdin");
+        stdin.write_all(CONTENT.as_bytes())?;
         drop(stdin);
         let status = child.wait().expect("Failed to wait for docker-compose");
         if !status.success() {
-            eprintln!("docker-compose failed with exit code: {}", status);
+            eprintln!("docker compose failed with exit code: {}", status);
         }
 
         Ok(())

@@ -1,6 +1,6 @@
 use md5::{Digest, Md5};
 use std::fs::{self, File};
-use std::io::{self, copy, Read};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use zip_extensions::*;
 
@@ -42,7 +42,7 @@ pub fn md5_dir(directory: &Path) -> io::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-#[tracing::instrument()]
+#[tracing::instrument]
 pub fn verify_beam_files<P: AsRef<Path> + std::fmt::Debug>(
     vsn: semver::Version,
     ext_priv_dir: P,
@@ -89,13 +89,14 @@ pub async fn update_beam_files(version: semver::Version, no_verify: bool) -> any
     .await?;
 
     if response.status() != 200 {
+        tracing::trace!("response was {}", response.text().await.unwrap());
         anyhow::bail!("Failed to pull the Merigo extension, probably because it doesn't exist for version `{version}`");
     }
 
     let body = response.bytes().await?;
 
     let mut tmp_file = File::create("merigo-extension-tmp.zip")?;
-    copy(&mut body.as_ref(), &mut tmp_file)?;
+    io::copy(&mut body.as_ref(), &mut tmp_file)?;
     let archive_file = PathBuf::from("merigo-extension-tmp.zip");
     let target_dir = PathBuf::from("./merigo-extension-tmp");
     tracing::trace!(path = ?target_dir, "extracting zip");

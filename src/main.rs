@@ -69,6 +69,9 @@ impl Command {
             None | Some(Commands::BuildCache { .. })
                 | Some(Commands::Login { .. })
                 | Some(Commands::Containers { .. })
+                | Some(Commands::Exec { .. })
+                | Some(Commands::UpdateBeamFiles { .. })
+                | Some(Commands::VerifyBeamFiles { .. })
         )
     }
 }
@@ -143,9 +146,9 @@ async fn create_index(
 
     std::fs::create_dir_all(".msde").context("Failed to create cache directory")?;
 
+    let key = credentials.ghcr_key.expose_secret();
     let registry_requests = REPOS_AND_IMAGES.iter().map(|repo_and_image| {
         let client = &client;
-        let key = credentials.ghcr_key.expose_secret();
         async move {
             let url = format!("https://ghcr.io/v2/merigo-co/{repo_and_image}/tags/list?n=1000");
             client
@@ -536,7 +539,7 @@ enum Commands {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
     },
-    /// Verify the integrity of BEAM files.
+    /// Update the BEAM files.
     UpdateBeamFiles {
         #[arg(short, long)]
         version: Option<semver::Version>,

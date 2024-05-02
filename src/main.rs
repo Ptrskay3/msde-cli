@@ -376,6 +376,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
 
             use raw_cpuid::CpuId;
+            // TODO: this is for x86, aarch will fail.
             let cpuid = CpuId::new();
             let mut sys = System::new_all();
 
@@ -504,8 +505,8 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 }
 
 #[cfg(not(unix))]
-pub fn new_docker() -> Result<Docker> {
-    Docker::new("tcp://127.0.0.1:8080")
+pub fn new_docker() -> docker_api::Result<Docker> {
+    Docker::new("tcp://127.0.0.1:2375")
 }
 
 #[derive(Subcommand, Debug)]

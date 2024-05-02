@@ -30,10 +30,10 @@ struct MetadataResponse {
 fn shell_config_location(shell: &Shell) -> &'static str {
     match shell {
         Shell::Bash => "~/.bashrc",
-        Shell::Elvish => todo!(),
         Shell::Fish => " ~/.config/fish/config.fish",
-        Shell::PowerShell => todo!(),
         Shell::Zsh => "~/.zshrc",
+        Shell::PowerShell => todo!(),
+        Shell::Elvish => todo!(),
         _ => todo!(),
     }
 }
@@ -228,11 +228,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
+    let msde_dir = msde_cli::env::msde_dir();
+    let ctx = msde_cli::env::Context::init_from_env();
+    println!("{ctx:?}");
 
-    tracing::info!(
-        "The current package directory is set to {:?}",
-        msde_cli::env::msde_dir()
-    );
+    tracing::info!("The current package directory is set to {:?}", msde_dir);
+
+    assert!(msde_dir.is_dir());
+
     if std::env::var("MERIGO_DEV_PACKAGE_DIR").is_err() {
         tracing::warn!(
             "The package is not found at the default location. Please set your project path by running:"
@@ -277,7 +280,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match cmd.command {
-        // TODO: sensible defaults
         Some(Commands::UpdateBeamFiles {
             version, no_verify, ..
         }) => {

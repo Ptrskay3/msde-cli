@@ -26,6 +26,8 @@ md-5 = "0.10.6"
 zip = "1.1.1"
 zip-extensions = "0.6"
 fs_extra = "1.3.0"
+home = "0.5.9"
+clap_complete = "4.5.2"
 
 # The profile that 'cargo dist' will build with
 [profile.dist]

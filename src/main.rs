@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use anyhow::Context;
 use clap::ValueEnum;
 use clap::{ArgAction, Parser, Subcommand};
+// TODO: The generate function is interesting.
+use clap_complete::shells::Shell;
 // May work better!
 // https://github.com/fussybeaver/bollard
 use docker_api::opts::ContainerListOpts;
@@ -23,6 +25,17 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct MetadataResponse {
     name: String,
     tags: Vec<String>,
+}
+
+fn shell_config_location(shell: &Shell) -> &'static str {
+    match shell {
+        Shell::Bash => "~/.bashrc",
+        Shell::Elvish => todo!(),
+        Shell::Fish => " ~/.config/fish/config.fish",
+        Shell::PowerShell => todo!(),
+        Shell::Zsh => "~/.zshrc",
+        _ => todo!(),
+    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -66,7 +79,8 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(Commands::BuildCache { .. })
+            None | Some(Commands::Init { .. })
+                | Some(Commands::BuildCache { .. })
                 | Some(Commands::Login { .. })
                 | Some(Commands::Containers { .. })
                 | Some(Commands::Exec { .. })
@@ -212,6 +226,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
+
+    tracing::info!(
+        "The current package directory is set to {:?}",
+        msde_cli::env::msde_dir()
+    );
+    if std::env::var("MERIGO_DEV_PACKAGE_DIR").is_err() {
+        tracing::warn!(
+            "The package is not found at the default location. Please set your project path by running:"
+        );
+        tracing::warn!(
+            "  echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> {}   ",
+            shell_config_location(&current_shell)
+        );
+    }
 
     let cmd = Command::parse();
     tracing::trace!(?cmd, "arguments parsed");
@@ -530,6 +560,10 @@ enum Commands {
     },
     Ssh,
     Shell,
+    Init {
+        #[arg(short, long)]
+        path: Option<std::path::PathBuf>,
+    },
     Exec {
         cmd: String,
     },

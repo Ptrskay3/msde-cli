@@ -105,7 +105,8 @@ pub async fn update_beam_files(version: semver::Version, no_verify: bool) -> any
         verify_beam_files(version, "./merigo-extension-tmp")?;
     }
     tracing::trace!("Copying BEAM files to their real destination..");
-    std::fs::remove_dir_all("./merigo-extension-real")?;
+    // Ignoring the error, because it may not exist.
+    let _ = std::fs::remove_dir_all("./merigo-extension-real");
     fs_extra::move_items(
         &["./merigo-extension-tmp"],
         "./merigo-extension-real",

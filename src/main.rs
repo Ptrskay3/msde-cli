@@ -375,9 +375,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::trace!("No subcommand was passed, starting diagnostic..");
             let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
 
-            use raw_cpuid::CpuId;
-            // TODO: this is for x86, aarch will fail.
-            let cpuid = CpuId::new();
             let mut sys = System::new_all();
 
             sys.refresh_all();
@@ -387,10 +384,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("used memory   : {} bytes", sys.used_memory());
             println!("total swap    : {} bytes", sys.total_swap());
             println!("used swap     : {} bytes", sys.used_swap());
-            if let Some(cpu_info) = cpuid.get_processor_brand_string() {
-                println!("CPU           : {}", cpu_info.as_str());
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                use raw_cpuid::CpuId;
+                let cpuid = CpuId::new();
+                if let Some(cpu_info) = cpuid.get_processor_brand_string() {
+                    println!("CPU           : {}", cpu_info.as_str());
+                }
             }
-
             println!("system name   : {}", sysinfo::System::name().unwrap());
             println!(
                 "kernel version: {}",

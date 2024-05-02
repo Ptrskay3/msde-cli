@@ -2,3 +2,4 @@
 .cache/
 .msde/
 default_credentials.json
+artifacts/

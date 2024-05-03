@@ -1,6 +1,6 @@
 [package]
 name = "msde-cli"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "CLI tool for running the Merigo Dev package."
 repository = "https://github.com/ptrskay3/msde-cli"
@@ -49,7 +49,7 @@ ci = ["github"]
 # Publish jobs to run in CI
 pr-run-mode = "plan"
 # A GitHub repo to push Homebrew formulas to
-tap = "Ptrskay3/homebrew-test-release"
+tap = "Ptrskay3/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 # Whether to install an updater program

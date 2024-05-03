@@ -27,12 +27,12 @@ struct MetadataResponse {
     tags: Vec<String>,
 }
 
-fn shell_config_location(shell: &Shell) -> &'static str {
+fn shell_configure_message(shell: &Shell) -> &'static str {
     match shell {
-        Shell::Bash => "~/.bashrc",
-        Shell::Fish => " ~/.config/fish/config.fish",
-        Shell::Zsh => "~/.zshrc",
-        Shell::PowerShell => todo!(),
+        Shell::Bash => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.bashrc",
+        Shell::Fish => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.config/fish/config.fish",
+        Shell::Zsh => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> {} ~/.zshrc",
+        Shell::PowerShell => "[System.Environment]::SetEnvironmentVariable('MERIGO_DEV_PACKAGE_DIR', 'C:\\path\\to\\package', 'User')",
         Shell::Elvish => todo!(),
         _ => todo!(),
     }
@@ -65,9 +65,11 @@ impl ParsedMetadataResponse {
 
 #[derive(Parser, Debug)]
 struct Command {
+    /// Enables verbose output.
     #[arg(short, long)]
     debug: bool,
 
+    /// Skip building a local cache of the MSDE image registry.
     #[arg(short, long)]
     no_build_cache: bool,
 
@@ -243,10 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!(
             "The package is not found at the default location. You may set your project path by running:"
         );
-        tracing::warn!(
-            "  echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> {}   ",
-            shell_config_location(&current_shell)
-        );
+        tracing::warn!("{}", shell_configure_message(&current_shell));
     }
 
     let cmd = Command::parse();
@@ -563,7 +562,9 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Wipe out all config files and folders.
     Clean {
+        /// Continue without asking for further confirmation.
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]
         always_yes: bool,
     },
@@ -575,20 +576,24 @@ enum Commands {
     Stop,
     Start,
     Down,
+    /// Open the logs of the target service.
     Log {
         #[command(subcommand)]
         target: Target,
     },
+    /// Pull the latest docker image of the target service.
     Pull {
         #[command(subcommand)]
         target: Target,
     },
     Ssh,
     Shell,
+    /// Initialize the MSDE developer package.
     Init {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
     },
+    /// Run a command in the target service.
     Exec {
         cmd: String,
     },
@@ -622,6 +627,7 @@ enum Commands {
         #[arg(short, long)]
         duration: Option<i64>,
     },
+    /// Check the available versions of the target service.
     Versions {
         #[command(subcommand)]
         target: Target,

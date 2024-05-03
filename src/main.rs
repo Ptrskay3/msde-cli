@@ -221,7 +221,7 @@ async fn create_index(
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, &index)?;
     writer.flush()?;
-    tracing::trace!("local cache built");
+    tracing::debug!("local cache built");
     Ok(())
 }
 
@@ -279,14 +279,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if time::OffsetDateTime::now_utc().unix_timestamp() > index.valid_until {
                     tracing::debug!("image registry cache is too old, rebuilding now.");
                     let credentials = try_login(&ctx)
-                        .context("No credentials found, run `msde-cli login` first.")?;
+                        .context("No credentials found, run `msde_cli login` first.")?;
                     create_index(&client, DEFAULT_DURATION, credentials).await?;
                 }
             }
             (_, Err(_)) => {
                 tracing::debug!("image registry cache is not built, building now.");
                 let credentials =
-                    try_login(&ctx).context("No credentials found, run `msde-cli login` first.")?;
+                    try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
                 create_index(&client, DEFAULT_DURATION, credentials).await?;
             }
         }
@@ -333,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::BuildCache { duration }) => {
             let credentials =
-                try_login(&ctx).context("No credentials found, run `msde-cli login` first.")?;
+                try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
             create_index(&client, duration.unwrap_or(DEFAULT_DURATION), credentials).await?
         }
         Some(Commands::Containers { always_yes }) => {
@@ -406,7 +406,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Pull { target }) => {
             let credentials =
-                try_login(&ctx).context("No credentials found, run `msde-cli login` first.")?;
+                try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
             pull(&docker, &target, cmd.no_build_cache, credentials).await?;
         }
         Some(Commands::Login {
@@ -543,6 +543,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             msde_cli::env::Context::clean(&ctx);
         }
+        Some(Commands::Up {}) => {
+            msde_cli::compose::Compose::up_builtin(None)?;
+        }
         _ => tracing::debug!("not now.."),
     }
 
@@ -572,6 +575,7 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    Up {},
     /// Wipe out all config files and folders.
     Clean {
         /// Continue without asking for further confirmation.

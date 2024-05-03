@@ -5,7 +5,7 @@ use std::{
 
 pub struct Compose;
 
-const CONTENT: &str = include_str!("../docker-compose.yml");
+const DOCKER_COMPOSE_BASE: &str = include_str!("../docker/docker-compose-base.yml");
 
 #[derive(Default)]
 pub struct ComposeOpts;
@@ -54,7 +54,7 @@ impl Compose {
         let Some(mut stdin) = child.stdin.take() else {
             anyhow::bail!("Failed to get stdin for docker-compose")
         };
-        stdin.write_all(CONTENT.as_bytes())?;
+        stdin.write_all(DOCKER_COMPOSE_BASE.as_bytes())?;
         drop(stdin);
         let status = child.wait().expect("Failed to wait for docker-compose");
         if !status.success() {

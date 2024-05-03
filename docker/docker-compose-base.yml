@@ -1,0 +1,146 @@
+x-logging: &default-logging
+  driver: 'json-file'
+  options:
+    max-file: '5'
+    max-size: '150m'
+
+networks:
+  backend:
+    attachable: true
+  consul:
+    ipam:
+      config:
+        - subnet: 172.99.0.0/24
+          gateway: 172.99.0.1
+
+volumes:
+  msde-log-dev:
+    driver: local
+
+services:
+  riak-kv-vm-dev:
+    container_name: riak-kv-vm-dev
+    build:
+      context: ./
+      dockerfile: riak/Dockerfile.Riak
+    networks:
+      - backend
+    ports:
+      - '8087:8087'
+      - '8098:8098'
+    environment:
+      - CLUSTER_NAME=riakkv
+    labels:
+      - com.basho.riak.cluster.name=riakkv
+    volumes:
+      - './schemas:/etc/riak/schemas'
+    depends_on:
+      consul-vm-dev:
+        condition: service_healthy
+      # Going to frontload some addiitonal services since riak-kv takes a bit to really start
+      redis-vm-dev:
+        condition: service_healthy
+    healthcheck:
+      test: riak-admin bucket-type status sets
+      interval: 5s
+      # Dont lower this timeout, the check bombs
+      timeout: 10s
+      retries: 50
+      start_period: 5s
+    logging: *default-logging
+  consul-vm-dev:
+    container_name: consul-vm-dev
+    image: hashicorp/consul:latest
+    command: consul agent -dev -bootstrap  -bind='{{ GetInterfaceIP "eth0" }}' -client='{{ GetInterfaceIP "eth0" }}' -recursor=8.8.8.8 -recursor=4.4.4.4
+    ports:
+      - '8500:8500'
+      - '8600:8600/udp'
+    networks:
+      consul:
+        ipv4_address: 172.99.0.2
+        aliases:
+          - consul.service.consul
+    environment:
+      CONSUL_BIND_INTERFACE: eth0
+      CONSUL_CLIENT_INTERFACE: eth0
+    healthcheck:
+      test: consul info --http-addr=http://172.99.0.2:8500
+      interval: 5s
+      timeout: 5s
+      retries: 50
+      start_period: 5s
+    logging:
+      *default-logging
+
+      # Redis
+  redis-vm-dev:
+    container_name: redis-vm-dev
+    image: redis:6.2
+    healthcheck:
+      test: ['CMD', 'redis-cli', '--raw', 'incr', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 50
+      start_period: 5s
+    networks:
+      consul:
+        ipv4_address: 172.99.0.13
+    depends_on:
+      consul-vm-dev:
+        condition: service_healthy
+    ports:
+      - '6379:6379'
+      - '16379:16379'
+      - '26379:26379'
+    logging: *default-logging
+
+  postgres-vm-dev:
+    container_name: postgres-vm-dev
+    image: 'postgres:13'
+    networks:
+      consul:
+        ipv4_address: 172.99.0.21
+    depends_on:
+      consul-vm-dev:
+        condition: service_healthy
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: pbs
+      PGDATA: /var/lib/pg_data
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'postgres']
+    volumes:
+      - './postgres:/docker-entrypoint-initdb.d'
+      - ./postgres/data:/var/lib/pg_data
+    logging: *default-logging
+
+  pgadmin-vm-dev:
+    container_name: pgadmin-vm-dev
+    image: dpage/pgadmin4
+    ports:
+      - '5050:5050'
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-dev@merigo.co}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-pass}
+      PGADMIN_LISTEN_PORT: 5050
+      PGADMIN_LISTEN_ADDRESS: '0.0.0.0'
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+      PGPASSFILE: '/var/lib/pgadmin/pgpass'
+    user: root
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json
+      - ./pgadmin/pgpass:/tmp/pgpass
+    entrypoint: >
+      /bin/sh -c "
+      chmod 600 /tmp/pgpass;
+      mkdir -p /var/lib/pgadmin;
+      cp /tmp/pgpass /var/lib/pgadmin/.;
+      /entrypoint.sh;
+      "
+    networks:
+      consul:
+        ipv4_address: 172.99.0.17

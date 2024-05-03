@@ -1,0 +1,71 @@
+x-logging: &default-logging
+  driver: 'json-file'
+  options:
+    max-file: '5'
+    max-size: '150m'
+
+networks:
+  docker_consul:
+    external: true
+
+services:
+  web3-vm-dev:
+    container_name: web3-vm-dev
+    image: 'ghcr.io/merigo-co/web3_services/web3_services_dev:${VSN}'
+    ports:
+      - '4300:4300'
+    environment:
+      - CONSUMER_IMAGE=ghcr.io/merigo-co/web3_services/web3_consumer_dev:${VSN}
+      - CONSUMER_NETWORK=docker_consul
+      - DOCKER_PORT=2375
+      - SERVICE_4300_NAME=web3_services
+      - SERVICE_PORT=4300
+      - SQS_ENDPOINT=http://172.99.0.10:9324
+      - AWS_ACCESS_KEY_ID=na
+      - AWS_SECRET_ACCESS_KEY=na
+      - AWS_PROFILE=
+      - AWS_REGION=none
+      - STAGE=dev
+      - QUEUE_VERSION=2012-11-05
+      - QUEUE_PREFIX=cu
+      - QUEUE_DELIVERY_DELAY_SECONDS=0
+      - QUEUE_VISIBILITY_TIMEOUT=30
+    volumes:
+      # The web3_vm_dev container creates and destroys containers
+      # that are responsible for queue processing
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      local_sqs:
+        condition: service_healthy
+    networks:
+      docker_consul:
+        ipv4_address: 172.99.0.7
+    healthcheck:
+      test: curl http://localhost:4300
+      interval: 5s
+      timeout: 5s
+      retries: 50
+      start_period: 5s
+    logging: *default-logging
+
+  web3-vm-dev-consumer:
+    container_name: web3-vm-dev-consumer
+    image: 'ghcr.io/merigo-co/web3_services/web3_consumer_dev:${VSN}'
+  local_sqs:
+    container_name: local_sqs
+    image: softwaremill/elasticmq
+    volumes:
+      - ./elasticmq/elasticmq.conf:/opt/elasticmq.conf
+    ports:
+      - '9324:9324'
+      - '9325:9325'
+    healthcheck:
+      test: curl -f http://172.99.0.10:9325
+      interval: 5s
+      timeout: 5s
+      retries: 50
+      start_period: 5s
+    networks:
+      docker_consul:
+        ipv4_address: 172.99.0.10
+    logging: *default-logging

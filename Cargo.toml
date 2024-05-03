@@ -30,6 +30,8 @@ zip-extensions = "0.6"
 fs_extra = "1.3.0"
 home = "0.5.9"
 clap_complete = "4.5.2"
+# TODO: Use it to open stuff when it's ready.
+webbrowser = "1.0.0"
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
@@ -54,6 +56,7 @@ tap = "Ptrskay3/homebrew-tap"
 publish-jobs = ["homebrew"]
 # Whether to install an updater program
 install-updater = true
+include = ["./docker"]
 
 [package.metadata.bundle]
 name = "MSDE-CLI"

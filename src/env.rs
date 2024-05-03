@@ -17,10 +17,10 @@ pub fn msde_dir() -> PathBuf {
 
 #[derive(Debug)]
 pub struct Context {
-    config_dir: PathBuf,
-    msde_dir: PathBuf,
-    version: Option<semver::Version>,
-    authorization: Option<Authorization>,
+    pub config_dir: PathBuf,
+    pub msde_dir: PathBuf,
+    pub version: Option<semver::Version>,
+    pub authorization: Option<Authorization>,
 }
 
 // TODO: fields
@@ -42,5 +42,9 @@ impl Context {
             version: None,
             authorization: None,
         }
+    }
+
+    pub fn clean(&self) {
+        std::fs::remove_dir_all(&self.config_dir).unwrap();
     }
 }

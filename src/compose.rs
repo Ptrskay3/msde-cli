@@ -38,6 +38,7 @@ impl Compose {
 
         Ok(())
     }
+
     pub fn up_builtin(opts: Option<ComposeOpts>) -> anyhow::Result<()> {
         let opts = opts.unwrap_or_default().into_args();
         let mut child = Command::new("docker")

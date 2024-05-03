@@ -79,7 +79,8 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(Commands::Init { .. })
+            None | Some(Commands::Clean { .. })
+                | Some(Commands::Init { .. })
                 | Some(Commands::BuildCache { .. })
                 | Some(Commands::Login { .. })
                 | Some(Commands::Containers { .. })
@@ -224,21 +225,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "msde_cli=trace".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .without_time()
+                .with_target(false),
+        )
         .init();
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
     let msde_dir = msde_cli::env::msde_dir();
     let ctx = msde_cli::env::Context::init_from_env();
-    println!("{ctx:?}");
+    tracing::trace!(?ctx, "context");
 
     tracing::info!("The current package directory is set to {:?}", msde_dir);
 
-    assert!(msde_dir.is_dir());
-
     if std::env::var("MERIGO_DEV_PACKAGE_DIR").is_err() {
         tracing::warn!(
-            "The package is not found at the default location. Please set your project path by running:"
+            "The package is not found at the default location. You may set your project path by running:"
         );
         tracing::warn!(
             "  echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> {}   ",
@@ -250,6 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::trace!(?cmd, "arguments parsed");
     tracing::trace!("attempting to connect to Docker daemon..");
     let docker = new_docker()?;
+    msde_cli::init::ensure_docker(&docker).await?;
     tracing::trace!("connected");
     let client = reqwest::Client::new();
 
@@ -389,7 +393,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("All containers stopped successfully.");
             }
 
-            println!("There shouldn't be any running containers now, let's roll");
+            println!("There shouldn't be any running containers now.");
         }
         Some(Commands::Pull { target }) => {
             let credentials =
@@ -515,6 +519,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("Available local Merigo related images are:\n{local_image_stats:#?}");
         }
+        Some(Commands::Clean { always_yes }) => {
+            let should_exit = if !always_yes {
+                println!("About to remove {:?}", ctx.config_dir);
+                println!("This is an irreversible action.");
+                !handle_yes_no_prompt()
+            } else {
+                false
+            };
+
+            if should_exit {
+                println!("exiting");
+                return Ok(());
+            }
+            msde_cli::env::Context::clean(&ctx);
+        }
         _ => tracing::debug!("not now.."),
     }
 
@@ -544,6 +563,10 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    Clean {
+        #[arg(short = 'y', long, action = ArgAction::SetTrue)]
+        always_yes: bool,
+    },
     /// Runs the target service(s), then attaches to its logs
     Run {
         #[command(subcommand)]

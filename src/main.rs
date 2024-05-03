@@ -64,6 +64,7 @@ impl ParsedMetadataResponse {
 }
 
 #[derive(Parser, Debug)]
+#[command(version)]
 struct Command {
     /// Enables verbose output.
     #[arg(short, long)]

@@ -235,13 +235,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
-    let msde_dir = msde_cli::env::msde_dir();
     let ctx = msde_cli::env::Context::init_from_env();
     tracing::trace!(?ctx, "context");
 
-    tracing::info!("The current package directory is set to {:?}", msde_dir);
-
-    if std::env::var("MERIGO_DEV_PACKAGE_DIR").is_err() {
+    if !ctx.dir_set {
         tracing::warn!(
             "The package is not found at the default location. You may set your project path by running:"
         );

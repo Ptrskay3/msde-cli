@@ -5,7 +5,7 @@ use std::{
 
 pub struct Compose;
 
-const CONTENT: &'static str = include_str!("../docker-compose.yml");
+const CONTENT: &str = include_str!("../docker-compose.yml");
 
 #[derive(Default)]
 pub struct ComposeOpts;

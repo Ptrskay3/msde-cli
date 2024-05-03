@@ -1,18 +1,46 @@
 //! This module takes care of setting up the msde binary's environment.
+//!
+//! The order of precedence is
+//! - environment variables
+//! - passed cli arguments (if exists)
+//! - msde config file
+//! - a sensible default (if exists)
 
-use std::path::PathBuf;
+use std::{fs::File, io::BufReader, path::PathBuf};
 
-pub fn msde_dir() -> PathBuf {
-    std::env::var("MERIGO_DEV_PACKAGE_DIR")
+pub fn msde_dir() -> anyhow::Result<(PathBuf, bool)> {
+    let mut dir_set = true;
+    let home = match home::home_dir() {
+        Some(path) if !path.as_os_str().is_empty() => path,
+        _ => anyhow::bail!("failed to determine home directory"),
+    };
+    let path = std::env::var("MERIGO_DEV_PACKAGE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = match home::home_dir() {
-                Some(path) if !path.as_os_str().is_empty() => path,
-                _ => panic!("failed to determine home directory"),
-            };
+        .or_else(|_| {
+            // TODO: Don't open and deserialize this file here..
+            let config = home.join(".msde/config.json");
+            let f = File::open(config)?;
+            let reader = BufReader::new(f);
+            let config: Config = serde_json::from_reader(reader)?;
 
-            home.join("merigo")
+            config
+                .merigo_dev_package_dir
+                .map(|p| p.canonicalize())
+                .ok_or(anyhow::Error::msg("invalid config"))
+                .map_err(|_| anyhow::Error::msg("invalid path"))?
+                .map_err(|_| anyhow::Error::msg("invalid config"))
         })
+        .or_else(|_: anyhow::Error| {
+            dir_set = false;
+            Ok(home.join("merigo"))
+        });
+    path.map(|p| (p, dir_set))
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct Config {
+    #[serde(rename = "MERIGO_DEV_PACKAGE_DIR")]
+    pub merigo_dev_package_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -21,6 +49,7 @@ pub struct Context {
     pub msde_dir: PathBuf,
     pub version: Option<semver::Version>,
     pub authorization: Option<Authorization>,
+    pub dir_set: bool,
 }
 
 // TODO: fields
@@ -35,12 +64,13 @@ impl Context {
         };
         let config_dir = home.join(".msde");
         std::fs::create_dir_all(&config_dir).unwrap();
-
+        let (msde_dir, dir_set) = msde_dir().expect("to be valid");
         Self {
             config_dir,
-            msde_dir: msde_dir(),
+            msde_dir,
             version: None,
             authorization: None,
+            dir_set,
         }
     }
 

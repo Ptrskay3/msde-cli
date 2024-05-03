@@ -8,12 +8,15 @@
 
 use std::{fs::File, io::BufReader, path::PathBuf};
 
-pub fn msde_dir() -> anyhow::Result<(PathBuf, bool)> {
-    let mut dir_set = true;
-    let home = match home::home_dir() {
-        Some(path) if !path.as_os_str().is_empty() => path,
+pub fn home() -> anyhow::Result<PathBuf> {
+    match home::home_dir() {
+        Some(path) if !path.as_os_str().is_empty() => Ok(path),
         _ => anyhow::bail!("failed to determine home directory"),
-    };
+    }
+}
+
+pub fn msde_dir(home: PathBuf) -> anyhow::Result<(PathBuf, bool)> {
+    let mut dir_set = true;
     let path = std::env::var("MERIGO_DEV_PACKAGE_DIR")
         .map(PathBuf::from)
         .or_else(|_| {
@@ -49,6 +52,7 @@ pub struct Context {
     pub msde_dir: PathBuf,
     pub version: Option<semver::Version>,
     pub authorization: Option<Authorization>,
+    /// Whether the working directory was explicitly set by the user by any means.
     pub dir_set: bool,
 }
 
@@ -64,7 +68,7 @@ impl Context {
         };
         let config_dir = home.join(".msde");
         std::fs::create_dir_all(&config_dir).unwrap();
-        let (msde_dir, dir_set) = msde_dir().expect("to be valid");
+        let (msde_dir, dir_set) = msde_dir(home).expect("to be valid");
         Self {
             config_dir,
             msde_dir,

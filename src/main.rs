@@ -126,31 +126,35 @@ struct UnsafeCredentials {
 }
 
 fn login(
+    context: &msde_cli::env::Context,
     ghcr_key: Option<String>,
     pull_key: Option<String>,
     file: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    std::fs::create_dir_all(".msde").context("Failed to create cache directory")?;
     if let Some(path_buf) = file {
         // TODO: Maybe open it, and check whether this file makes sense?
-        std::fs::copy(path_buf, ".msde/credentials.json")?;
+        std::fs::copy(path_buf, context.config_dir.join("credentials.json"))?;
     } else {
         let ghcr_key = ghcr_key.context("ghrc-key is required")?;
         let pull_key = pull_key.context("pull-key is required")?;
         let credentials = UnsafeCredentials { ghcr_key, pull_key };
-        let file = File::create(".msde/credentials.json")?;
+        let file = File::create(context.config_dir.join("credentials.json"))?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &credentials)?;
         writer.flush()?;
     }
-    tracing::warn!("stored *unencrypted* credentials to `.msde/credentials.json`");
+    tracing::info!(
+        "stored *unencrypted* credentials in `{:?}`",
+        context.config_dir.join("credentials.json")
+    );
     Ok(())
 }
 
-fn try_login() -> anyhow::Result<SecretCredentials> {
-    let file = std::fs::File::open(".msde/credentials.json")?;
+fn try_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
+    let file = std::fs::File::open(ctx.config_dir.join("credentials.json"))?;
     let reader = BufReader::new(file);
-    let credentials: SecretCredentials = serde_json::from_reader(reader)?;
+    let credentials: SecretCredentials =
+        serde_json::from_reader(reader).context("invalid credentials file")?;
     Ok(credentials)
 }
 
@@ -173,6 +177,7 @@ async fn create_index(
                 .bearer_auth(key)
                 .send()
                 .await?
+                // TODO: the error response is not considered here. That can happen when you don't have sufficient permissions.
                 .json::<MetadataResponse>()
                 .await
         }
@@ -220,12 +225,18 @@ async fn create_index(
     Ok(())
 }
 
+#[cfg(debug_assertions)]
+static LOGLEVEL: &str = "msde_cli=trace";
+
+#[cfg(not(debug_assertions))]
+static LOGLEVEL: &str = "msde_cli=info";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "msde_cli=trace".into()),
+                .unwrap_or_else(|_| LOGLEVEL.into()),
         )
         .with(
             tracing_subscriber::fmt::layer()
@@ -238,11 +249,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = msde_cli::env::Context::init_from_env();
     tracing::trace!(?ctx, "context");
 
-    if !ctx.dir_set {
-        tracing::warn!(
-            "The package is not found at the default location. You may set your project path by running:"
-        );
-        tracing::warn!("{}", shell_configure_message(&current_shell));
+    match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
+        (true, _) | (false, Ok(_)) => {}
+        (false, _) => {
+            tracing::warn!("The developer package is not yet configured.");
+            tracing::warn!("To configure, you may use the `init` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable:");
+            tracing::warn!("{}", shell_configure_message(&current_shell));
+        }
     }
 
     let cmd = Command::parse();
@@ -265,15 +278,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if time::OffsetDateTime::now_utc().unix_timestamp() > index.valid_until {
                     tracing::debug!("image registry cache is too old, rebuilding now.");
-                    let credentials =
-                        try_login().context("No credentials found, run `msde-cli login` first.")?;
+                    let credentials = try_login(&ctx)
+                        .context("No credentials found, run `msde-cli login` first.")?;
                     create_index(&client, DEFAULT_DURATION, credentials).await?;
                 }
             }
             (_, Err(_)) => {
                 tracing::debug!("image registry cache is not built, building now.");
                 let credentials =
-                    try_login().context("No credentials found, run `msde-cli login` first.")?;
+                    try_login(&ctx).context("No credentials found, run `msde-cli login` first.")?;
                 create_index(&client, DEFAULT_DURATION, credentials).await?;
             }
         }
@@ -320,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::BuildCache { duration }) => {
             let credentials =
-                try_login().context("No credentials found, run `msde-cli login` first.")?;
+                try_login(&ctx).context("No credentials found, run `msde-cli login` first.")?;
             create_index(&client, duration.unwrap_or(DEFAULT_DURATION), credentials).await?
         }
         Some(Commands::Containers { always_yes }) => {
@@ -393,7 +406,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Pull { target }) => {
             let credentials =
-                try_login().context("No credentials found, run `msde-cli login` first.")?;
+                try_login(&ctx).context("No credentials found, run `msde-cli login` first.")?;
             pull(&docker, &target, cmd.no_build_cache, credentials).await?;
         }
         Some(Commands::Login {
@@ -401,7 +414,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pull_key,
             file,
         }) => {
-            login(ghcr_key, pull_key, file)?;
+            login(&ctx, ghcr_key, pull_key, file)?;
         }
         None => {
             tracing::trace!("No subcommand was passed, starting diagnostic..");

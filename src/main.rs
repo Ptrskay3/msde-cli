@@ -246,6 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
+    tracing::warn!(current_exe = ?std::env::current_exe(), "current exe");
     let ctx = msde_cli::env::Context::init_from_env();
     tracing::trace!(?ctx, "context");
 

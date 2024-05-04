@@ -1,5 +1,0 @@
-FROM basho/riak-kv
-
-COPY riak/02-bootstrap-datatypes.sh /etc/riak/poststart.d/
-
-CMD ["/usr/lib/riak/riak-cluster.sh"]

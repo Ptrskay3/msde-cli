@@ -258,17 +258,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = msde_cli::env::Context::from_env();
     tracing::trace!(?ctx, "context");
 
-    match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
-        (true, _) | (false, Ok(_)) => {
-            tracing::debug!(path = %ctx.msde_dir.display(), "Active project is at");
-        }
-        (false, _) => {
-            tracing::warn!("The developer package is not yet configured.");
-            tracing::warn!("To configure, you may use the `init` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable:");
-            tracing::warn!("{}", shell_configure_message(&current_shell));
-        }
-    }
-
     let cmd = Command::parse();
     // TODO: Check how fallible this is.
     // Use this to provide an upgrade project command.
@@ -276,6 +265,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_version()
         .map(|s| semver::Version::parse(s).unwrap())
         .unwrap();
+
+    if !matches!(&cmd.command, Some(Commands::Init { .. })) {
+        match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
+            (true, _) | (false, Ok(_)) => {
+                tracing::debug!(path = %ctx.msde_dir.display(), "Active project is at");
+            }
+            (false, _) => {
+                tracing::warn!("The developer package is not yet configured.");
+                tracing::warn!("To configure, you may use the `init` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable:");
+                tracing::warn!("{}", shell_configure_message(&current_shell));
+            }
+        }
+    }
 
     tracing::trace!(?cmd, "arguments parsed");
     tracing::trace!("attempting to connect to Docker daemon..");

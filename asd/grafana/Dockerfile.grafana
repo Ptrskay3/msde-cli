@@ -1,7 +1,0 @@
-FROM grafana/grafana:9.3.6
-
-USER root
-RUN apk --no-cache add curl
-
-USER grafana
-CMD ["/run.sh"]

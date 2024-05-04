@@ -1,6 +1,6 @@
 [package]
 name = "msde-cli"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 description = "CLI tool for running the Merigo Dev package."
 repository = "https://github.com/ptrskay3/msde-cli"

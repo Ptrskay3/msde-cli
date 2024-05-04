@@ -12,6 +12,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::shells::Shell;
 // May work better!
 // https://github.com/fussybeaver/bollard
+use dialoguer::Input;
 use docker_api::opts::ContainerListOpts;
 use docker_api::opts::ContainerStopOpts;
 use docker_api::Docker;
@@ -246,6 +247,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_target(false),
         )
         .init();
+    let theme = dialoguer::theme::ColorfulTheme {
+        checked_item_prefix: console::style("  [x]".to_string()).for_stderr().green(),
+        unchecked_item_prefix: console::style("  [ ]".to_string()).for_stderr().dim(),
+        active_item_style: console::Style::new().for_stderr().cyan().bold(),
+        ..dialoguer::theme::ColorfulTheme::default()
+    };
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
     tracing::warn!(current_exe = ?std::env::current_exe(), "current exe");
@@ -551,8 +558,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             msde_cli::compose::Compose::up_builtin(None)?;
         }
         Some(Commands::Init { path, .. }) => {
-            // TODO: --force arg, interactive mode
-            let target = path.unwrap_or(ctx.msde_dir);
+            // TODO: --force arg, customize interactive mode, integrate login
+            let target = path.unwrap_or_else(|| {
+                let res: String = Input::with_theme(&theme)
+                    .with_prompt("Where should the project be initialized?\nInput a directory, or accept the default with Enter:")
+                    .allow_empty(true)
+                    .default(ctx.msde_dir.to_string_lossy().into_owned())
+                    .interact_text()
+                    .unwrap();
+                PathBuf::from(res)
+            });
             msde_cli::init::ensure_valid_project_path(&target)?;
             let mut archive = tar::Archive::new(GzDecoder::new(msde_cli::PACKAGE));
             archive.unpack(&target).with_context(|| {

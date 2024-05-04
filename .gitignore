@@ -3,3 +3,4 @@
 .msde/
 default_credentials.json
 artifacts/
+compressed.zip

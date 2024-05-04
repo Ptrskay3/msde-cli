@@ -246,6 +246,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // We may compress stuff into the binary itself:
+    // use flate2::bufread;
+    // let mut decoder = bufread::GzDecoder::new(msde_cli::FILE);
+    // let mut stdout = std::io::stdout();
+    // std::io::copy(&mut decoder, &mut stdout).unwrap();
+
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
     tracing::warn!(current_exe = ?std::env::current_exe(), "current exe");
     let ctx = msde_cli::env::Context::init_from_env();

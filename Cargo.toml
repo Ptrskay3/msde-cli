@@ -32,6 +32,8 @@ home = "0.5.9"
 clap_complete = "4.5.2"
 # TODO: Use it to open stuff when it's ready.
 webbrowser = "1.0.0"
+flate2 = "1.0"
+
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
@@ -41,7 +43,7 @@ lto = "thin"
 # Config for 'cargo dist'
 [workspace.metadata.dist]
 # The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.13.1"
+cargo-dist-version = "0.13.3"
 # The installers to generate for each app
 installers = ["shell", "homebrew", "msi"]
 # Target platforms to build apps for (Rust target-triple syntax)
@@ -56,6 +58,7 @@ tap = "Ptrskay3/homebrew-tap"
 publish-jobs = ["homebrew"]
 # Whether to install an updater program
 install-updater = true
+# Extra static files to include in each App (path relative to this Cargo.toml's dir)
 include = ["./docker"]
 
 [package.metadata.bundle]
@@ -76,3 +79,6 @@ upgrade-guid = "88E9817A-22F6-45F8-9257-FCD20FAE5E88"
 path-guid = "67B68274-A125-4D30-8744-B2D32589F7A7"
 license = false
 eula = false
+
+[build-dependencies]
+flate2 = "1.0"

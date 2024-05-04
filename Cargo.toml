@@ -34,6 +34,8 @@ clap_complete = "4.5.2"
 webbrowser = "1.0.0"
 flate2 = "1.0"
 tar = "0.4"
+dialoguer = "0.11.0"
+console = "0.15.8"
 
 
 # The profile that 'cargo dist' will build with

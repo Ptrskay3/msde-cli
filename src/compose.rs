@@ -1,7 +1,4 @@
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::process::{Command, Stdio};
 
 pub struct Compose;
 
@@ -37,7 +34,7 @@ impl Compose {
         Ok(())
     }
 
-    pub fn up_builtin(opts: Option<ComposeOpts>) -> anyhow::Result<()> {
+    pub fn up_builtin(_opts: Option<ComposeOpts>) -> anyhow::Result<()> {
         todo!();
         // let opts = opts.unwrap_or_default().into_args();
         // let mut child = Command::new("docker")

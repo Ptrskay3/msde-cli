@@ -255,12 +255,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
-    tracing::warn!(current_exe = ?std::env::current_exe(), "current exe");
-    let ctx = msde_cli::env::Context::init_from_env();
+    let ctx = msde_cli::env::Context::from_env();
     tracing::trace!(?ctx, "context");
 
     match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
-        (true, _) | (false, Ok(_)) => {}
+        (true, _) | (false, Ok(_)) => {
+            tracing::debug!(path = %ctx.msde_dir.display(), "Active project is at");
+        }
         (false, _) => {
             tracing::warn!("The developer package is not yet configured.");
             tracing::warn!("To configure, you may use the `init` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable:");
@@ -269,6 +270,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let cmd = Command::parse();
+    // TODO: Check how fallible this is.
+    // Use this to provide an upgrade project command.
+    let _self_version = <Command as clap::CommandFactory>::command()
+        .get_version()
+        .map(|s| semver::Version::parse(s).unwrap())
+        .unwrap();
+
     tracing::trace!(?cmd, "arguments parsed");
     tracing::trace!("attempting to connect to Docker daemon..");
     let docker = new_docker()?;
@@ -557,18 +565,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Up {}) => {
             msde_cli::compose::Compose::up_builtin(None)?;
         }
-        Some(Commands::Init { path, .. }) => {
-            // TODO: --force arg, customize interactive mode, integrate login
+        Some(Commands::Init { path, force }) => {
+            // TODO: integrate login
             let target = path.unwrap_or_else(|| {
                 let res: String = Input::with_theme(&theme)
-                    .with_prompt("Where should the project be initialized?\nInput a directory, or accept the default with Enter:")
+                    .with_prompt("Where should the project be initialized?\nInput a directory, or press enter to accept the default.")
                     .allow_empty(true)
                     .default(ctx.msde_dir.to_string_lossy().into_owned())
                     .interact_text()
                     .unwrap();
                 PathBuf::from(res)
             });
-            msde_cli::init::ensure_valid_project_path(&target)?;
+            msde_cli::init::ensure_valid_project_path(&target, force)?;
             let mut archive = tar::Archive::new(GzDecoder::new(msde_cli::PACKAGE));
             archive.unpack(&target).with_context(|| {
                 format!(
@@ -576,6 +584,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     target.display()
                 )
             })?;
+            ctx.write_config(target.canonicalize().unwrap())?;
             tracing::info!(path = %target.display(), "Successfully initialized project at");
             // TODO: Write .msde/config.json. Write extra info to the target directory about self-version.
             // Offer an upgrade on a project directory, potentially leaving a /games directory unchanged.

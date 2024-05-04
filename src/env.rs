@@ -6,7 +6,11 @@
 //! - msde config file
 //! - a sensible default (if exists)
 
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::{
+    fs::File,
+    io::{BufReader, Write},
+    path::PathBuf,
+};
 
 pub fn home() -> anyhow::Result<PathBuf> {
     match home::home_dir() {
@@ -40,7 +44,7 @@ pub fn msde_dir(home: PathBuf) -> anyhow::Result<(PathBuf, bool)> {
     path.map(|p| (p, dir_set))
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub struct Config {
     #[serde(rename = "MERIGO_DEV_PACKAGE_DIR")]
     pub merigo_dev_package_dir: Option<PathBuf>,
@@ -61,7 +65,7 @@ pub struct Context {
 pub struct Authorization;
 
 impl Context {
-    pub fn init_from_env() -> Self {
+    pub fn from_env() -> Self {
         let home = match home::home_dir() {
             Some(path) if !path.as_os_str().is_empty() => path,
             _ => panic!("failed to determine home directory"),
@@ -80,5 +84,26 @@ impl Context {
 
     pub fn clean(&self) {
         std::fs::remove_dir_all(&self.config_dir).unwrap();
+    }
+
+    // TODO: Read if exists, and modify (maybe not even here, we should load Config into memory in init)
+    pub fn write_config(&self, project_path: PathBuf) -> anyhow::Result<()> {
+        std::fs::create_dir_all(&self.config_dir)?;
+        let config_file = self.config_dir.join("config.json");
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(config_file)?;
+
+        let mut writer = std::io::BufWriter::new(f);
+
+        serde_json::to_writer(
+            &mut writer,
+            &Config {
+                merigo_dev_package_dir: Some(project_path),
+            },
+        )?;
+        writer.flush()?;
+        Ok(())
     }
 }

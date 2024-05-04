@@ -15,6 +15,7 @@ use clap_complete::shells::Shell;
 use docker_api::opts::ContainerListOpts;
 use docker_api::opts::ContainerStopOpts;
 use docker_api::Docker;
+use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
@@ -230,7 +231,7 @@ async fn create_index(
 static LOGLEVEL: &str = "msde_cli=trace";
 
 #[cfg(not(debug_assertions))]
-static LOGLEVEL: &str = "msde_cli=info";
+static LOGLEVEL: &str = "msde_cli=debug"; // TODO: this should be info level probably
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -245,12 +246,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_target(false),
         )
         .init();
-
-    // We may compress stuff into the binary itself:
-    // use flate2::bufread;
-    // let mut decoder = bufread::GzDecoder::new(msde_cli::FILE);
-    // let mut stdout = std::io::stdout();
-    // std::io::copy(&mut decoder, &mut stdout).unwrap();
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
     tracing::warn!(current_exe = ?std::env::current_exe(), "current exe");
@@ -537,6 +532,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Available local Merigo related images are:\n{local_image_stats:#?}");
         }
         Some(Commands::Clean { always_yes }) => {
+            // TODO: Undo init.
             let should_exit = if !always_yes {
                 println!("About to remove {:?}", ctx.config_dir);
                 println!("This is an irreversible action.");
@@ -553,6 +549,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Up {}) => {
             msde_cli::compose::Compose::up_builtin(None)?;
+        }
+        Some(Commands::Init { path, .. }) => {
+            // TODO: --force arg, interactive mode
+            let target = path.unwrap_or(ctx.msde_dir);
+            msde_cli::init::ensure_valid_project_path(&target)?;
+            let mut archive = tar::Archive::new(GzDecoder::new(msde_cli::PACKAGE));
+            archive.unpack(&target).with_context(|| {
+                format!(
+                    "Failed to initialize MSDE at directory `{}`",
+                    target.display()
+                )
+            })?;
+            tracing::info!(path = %target.display(), "Successfully initialized project at");
+            // TODO: Write .msde/config.json. Write extra info to the target directory about self-version.
+            // Offer an upgrade on a project directory, potentially leaving a /games directory unchanged.
         }
         _ => tracing::debug!("not now.."),
     }
@@ -614,6 +625,9 @@ enum Commands {
     Init {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
+
+        #[arg(long, action = ArgAction::SetTrue)]
+        force: bool,
     },
     /// Run a command in the target service.
     Exec {

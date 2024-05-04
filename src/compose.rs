@@ -5,8 +5,6 @@ use std::{
 
 pub struct Compose;
 
-const DOCKER_COMPOSE_BASE: &str = include_str!("../docker/docker-compose-base.yml");
-
 #[derive(Default)]
 pub struct ComposeOpts;
 
@@ -40,27 +38,28 @@ impl Compose {
     }
 
     pub fn up_builtin(opts: Option<ComposeOpts>) -> anyhow::Result<()> {
-        let opts = opts.unwrap_or_default().into_args();
-        let mut child = Command::new("docker")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null()) // TODO
-            .arg("compose")
-            .arg("-f")
-            .arg("-")
-            .arg("up")
-            .args(opts)
-            .spawn()?;
+        todo!();
+        // let opts = opts.unwrap_or_default().into_args();
+        // let mut child = Command::new("docker")
+        //     .stdin(Stdio::piped())
+        //     .stdout(Stdio::null()) // TODO
+        //     .arg("compose")
+        //     .arg("-f")
+        //     .arg("-")
+        //     .arg("up")
+        //     .args(opts)
+        //     .spawn()?;
 
-        let Some(mut stdin) = child.stdin.take() else {
-            anyhow::bail!("Failed to get stdin for docker-compose")
-        };
-        stdin.write_all(DOCKER_COMPOSE_BASE.as_bytes())?;
-        drop(stdin);
-        let status = child.wait().expect("Failed to wait for docker-compose");
-        if !status.success() {
-            eprintln!("docker compose failed with exit code: {}", status);
-        }
+        // let Some(mut stdin) = child.stdin.take() else {
+        //     anyhow::bail!("Failed to get stdin for docker-compose")
+        // };
+        // stdin.write_all(DOCKER_COMPOSE_BASE.as_bytes())?;
+        // drop(stdin);
+        // let status = child.wait().expect("Failed to wait for docker-compose");
+        // if !status.success() {
+        //     eprintln!("docker compose failed with exit code: {}", status);
+        // }
 
-        Ok(())
+        // Ok(())
     }
 }

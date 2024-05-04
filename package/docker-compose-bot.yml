@@ -1,0 +1,28 @@
+x-logging: &default-logging
+  driver: 'json-file'
+  options:
+    max-file: '5'
+    max-size: '150m'
+
+include:
+  - 'docker-compose.yml'
+
+services:
+  bot-vm-dev:
+    image: 'docker.pkg.github.com/merigo-co/merigo_dev_packages/bot-vm-dev:bot-vm-dev-docker-${VSN}'
+    container_name: bot-vm-dev
+    hostname: 172.99.0.8
+    environment:
+      - LC_ALL=en_US.UTF-8
+    networks:
+      backend:
+      docker_consul:
+        ipv4_address: 172.99.0.8
+    depends_on:
+      - riak-kv-vm-dev
+      - msde-vm-dev
+    ports:
+      - '8082:8082'
+    stdin_open: true
+    tty: true
+    logging: *default-logging

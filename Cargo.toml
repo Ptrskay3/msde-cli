@@ -33,6 +33,7 @@ clap_complete = "4.5.2"
 # TODO: Use it to open stuff when it's ready.
 webbrowser = "1.0.0"
 flate2 = "1.0"
+tar = "0.4"
 
 
 # The profile that 'cargo dist' will build with
@@ -58,8 +59,6 @@ tap = "Ptrskay3/homebrew-tap"
 publish-jobs = ["homebrew"]
 # Whether to install an updater program
 install-updater = true
-# Extra static files to include in each App (path relative to this Cargo.toml's dir)
-include = ["./docker"]
 
 [package.metadata.bundle]
 name = "MSDE-CLI"
@@ -82,3 +81,4 @@ eula = false
 
 [build-dependencies]
 flate2 = "1.0"
+tar = "0.4"

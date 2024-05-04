@@ -1,0 +1,80 @@
+include:
+  - docker-compose-base.yml
+
+x-logging: &default-logging
+  driver: 'json-file'
+  options:
+    max-file: '5'
+    max-size: '150m'
+
+networks:
+  docker_consul:
+    external: true
+
+volumes:
+  msde-log-dev:
+    driver: local
+
+services:
+   #  MSDE --------------------------------------------------------------------
+  msde-vm-dev:
+    image: 'docker.pkg.github.com/merigo-co/merigo_dev_packages/msde-vm-dev:msde-vm-dev-docker-${VSN}'
+    container_name: msde-vm-dev
+    hostname: 172.99.0.5
+    environment:
+      - LC_ALL=en_US.UTF-8
+    networks:
+      backend:
+      docker_consul:
+        ipv4_address: 172.99.0.5
+    depends_on:
+      riak-kv-vm-dev:
+        condition: service_healthy
+      consul-vm-dev:
+        condition: service_healthy
+      compiler-vm-dev:
+        condition: service_started
+      postgres-vm-dev:
+        condition: service_healthy
+      pgadmin-vm-dev:
+        condition: service_started
+    volumes:
+      - msde-log-dev:/usr/local/bin/merigo/msde/log/msde
+    ports:
+      - '8080:8080'
+      - '8089:8089'
+      - '8090:8090'
+      - '8091:8091'
+      - '8095:8095'
+      - '9000:9000'
+      - '50059:50059'
+    healthcheck:
+      test: curl http://localhost:8090
+      interval: 5s
+      timeout: 5s
+      retries: 50
+      start_period: 5s
+    stdin_open: true
+    tty: true
+    init: true
+    logging: *default-logging
+
+  # Compiler ----------------------------------------------------------------
+  compiler-vm-dev:
+    image: 'docker.pkg.github.com/merigo-co/merigo_dev_packages/compiler-vm-dev:compiler-vm-dev-docker-${VSN}'
+    container_name: compiler-vm-dev
+    hostname: 172.99.0.6
+    environment:
+      - LC_ALL=en_US.UTF-8
+    networks:
+      backend:
+      docker_consul:
+        ipv4_address: 172.99.0.6
+    depends_on:
+      riak-kv-vm-dev:
+        condition: service_healthy
+      consul-vm-dev:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    logging: *default-logging

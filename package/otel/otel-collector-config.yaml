@@ -1,0 +1,40 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 2000
+
+  batch:
+
+exporters:
+  logging:
+    #loglevel: debug
+    verbosity: detailed
+  otlp/elastic:
+    endpoint: "apm-server:8200"
+    tls:
+      cert_file: "/certs/cfssl/cert.pem"
+      key_file: "/certs/cfssl/cert-key.pem"
+      insecure_skip_verify: true
+    headers:
+      # Elastic APM Server secret token
+      Authorization: "Bearer SuperSecretToken"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [logging, otlp/elastic]
+      processors: []
+    metrics:
+      receivers: [otlp]
+      exporters: [logging, otlp/elastic]
+      processors: []
+    logs:
+      receivers: [otlp]
+      exporters: [logging, otlp/elastic]
+      processors: []

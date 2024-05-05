@@ -18,6 +18,7 @@ use docker_api::opts::ContainerStopOpts;
 use docker_api::Docker;
 use flate2::bufread::GzDecoder;
 use futures::StreamExt;
+use msde_cli::env::PackageLocalConfig;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 use sysinfo::System;
@@ -84,7 +85,8 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(Commands::Clean { .. })
+            None | Some(Commands::UpgradeProject { .. })
+                | Some(Commands::Clean { .. })
                 | Some(Commands::Init { .. })
                 | Some(Commands::BuildCache { .. })
                 | Some(Commands::Login { .. })
@@ -270,6 +272,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
             (true, _) | (false, Ok(_)) => {
                 tracing::debug!(path = %ctx.msde_dir.display(), "Active project is at");
+                // TODO: don't run this on some commands. Probably refactor this whole block..
+                if let Err(e) = ctx.run_project_checks(self_version.clone()) {
+                    tracing::warn!(error = %e, "project is invalid");
+                }
             }
             (false, _) => {
                 tracing::warn!("The developer package is not yet configured.");
@@ -568,7 +574,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             msde_cli::compose::Compose::up_builtin(None)?;
         }
         Some(Commands::Init { path, force }) => {
-            // TODO: integrate login..
+            // TODO: integrate login, integrate BEAM file stuff.
+            // Prompt whether example games should be included
+            // Message to put their existing games inside a folder..
             let target = path.unwrap_or_else(|| {
                 let res: String = Input::with_theme(&theme)
                     .with_prompt("Where should the project be initialized?\nInput a directory, or press enter to accept the default.")
@@ -592,9 +600,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!(path = %target.display(), "Successfully initialized project at");
             // Offer an upgrade on a project directory, potentially leaving a /games directory unchanged.
         }
-        Some(Commands::UpgradeProject { path: _ }) => {
+        Some(Commands::UpgradeProject { path }) => {
+            // TODO: probably a prompt would be better..
+            // TODO also: These checks are already implemented elsewhere.
             // Plan:
             // 1. Obtain the project path, and find metadata.json
+            let project_path = ctx
+                .explicit_project_path()
+                .or_else(|| path.as_ref())
+                .context("No active project path found.")?;
+            tracing::debug!(path = %project_path.display(), "Upgrade project at");
+            let config = project_path.join("metadata.json");
+            let f = File::open(config)
+                .context("metadata.json file is missing. Please rerun `msde_cli init`.")?;
+            let reader = BufReader::new(f);
+            let PackageLocalConfig {
+                self_version: project_self_version,
+                ..
+            } = serde_json::from_reader(reader)
+                .context("metadata.json file is invalid. Please rerun `msde_cli init`.")?;
+            let project_self_version = semver::Version::parse(&project_self_version).unwrap();
+            println!(
+                "project self version {project_self_version:?} | self version {self_version:?}"
+            );
             // 2. Compare the current self_version and the metadata's version.
             // 3. Lookup the migration matrix function (which is TBD.).
             // 4. Write the changes to disk, or display migration steps that need to be done manually.

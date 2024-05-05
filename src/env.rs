@@ -90,6 +90,10 @@ impl Context {
         })
     }
 
+    pub fn explicit_project_path(&self) -> Option<&PathBuf> {
+        self.dir_set.then_some(&self.msde_dir)
+    }
+
     pub fn clean(&self) {
         std::fs::remove_dir_all(&self.config_dir).unwrap();
     }
@@ -101,6 +105,7 @@ impl Context {
         let f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true) // TODO: Truncating until we properly read and modify this file.
             .open(config_file)?;
 
         let mut writer = std::io::BufWriter::new(f);
@@ -140,5 +145,26 @@ impl Context {
 
     pub fn set_project_path(&mut self, project_path: &PathBuf) {
         self.msde_dir = project_path.clone();
+    }
+
+    pub fn run_project_checks(&self, self_version: semver::Version) -> anyhow::Result<()> {
+        if !self.dir_set {
+            return Ok(());
+        }
+        let metadata_file = self.msde_dir.join("./metadata.json");
+        anyhow::ensure!(metadata_file.exists(), "metadata file is missing");
+        let f = std::fs::OpenOptions::new().read(true).open(metadata_file)?;
+
+        let reader = std::io::BufReader::new(f);
+        let metadata = serde_json::from_reader::<_, PackageLocalConfig>(reader)
+            .context("metadata file is invalid")?;
+
+        let project_version = semver::Version::parse(&metadata.self_version)?;
+        if project_version != self_version {
+            anyhow::bail!(
+                "Project is version {project_version}, but CLI is version {self_version}."
+            )
+        }
+        Ok(())
     }
 }

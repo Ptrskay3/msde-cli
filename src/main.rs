@@ -255,13 +255,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
-    let ctx = msde_cli::env::Context::from_env();
+    let mut ctx = msde_cli::env::Context::from_env()?;
     tracing::trace!(?ctx, "context");
 
     let cmd = Command::parse();
     // TODO: Check how fallible this is.
     // Use this to provide an upgrade project command.
-    let _self_version = <Command as clap::CommandFactory>::command()
+    let self_version = <Command as clap::CommandFactory>::command()
         .get_version()
         .map(|s| semver::Version::parse(s).unwrap())
         .unwrap();
@@ -568,17 +568,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             msde_cli::compose::Compose::up_builtin(None)?;
         }
         Some(Commands::Init { path, force }) => {
-            // TODO: integrate login
+            // TODO: integrate login..
             let target = path.unwrap_or_else(|| {
                 let res: String = Input::with_theme(&theme)
                     .with_prompt("Where should the project be initialized?\nInput a directory, or press enter to accept the default.")
-                    .allow_empty(true)
-                    .default(ctx.msde_dir.to_string_lossy().into_owned())
+                    // FIXME: Horrible default, probably move this to the Context struct
+                    .default(msde_cli::env::home().unwrap().join("merigo").to_string_lossy().into_owned())
                     .interact_text()
                     .unwrap();
                 PathBuf::from(res)
             });
             msde_cli::init::ensure_valid_project_path(&target, force)?;
+            ctx.set_project_path(&target);
             let mut archive = tar::Archive::new(GzDecoder::new(msde_cli::PACKAGE));
             archive.unpack(&target).with_context(|| {
                 format!(
@@ -587,9 +588,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             })?;
             ctx.write_config(target.canonicalize().unwrap())?;
+            ctx.write_package_local_config(self_version)?;
             tracing::info!(path = %target.display(), "Successfully initialized project at");
-            // TODO: Write .msde/config.json. Write extra info to the target directory about self-version.
             // Offer an upgrade on a project directory, potentially leaving a /games directory unchanged.
+        }
+        Some(Commands::UpgradeProject { path: _ }) => {
+            // Plan:
+            // 1. Obtain the project path, and find metadata.json
+            // 2. Compare the current self_version and the metadata's version.
+            // 3. Lookup the migration matrix function (which is TBD.).
+            // 4. Write the changes to disk, or display migration steps that need to be done manually.
+            // 5. Update the metadata.json.
+            // 6. Optionally display a warning message if the current project is not using the right self_version.
+            todo!();
         }
         _ => tracing::debug!("not now.."),
     }
@@ -620,6 +631,10 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    UpgradeProject {
+        #[arg(short, long)]
+        path: Option<std::path::PathBuf>,
+    },
     Up {},
     /// Wipe out all config files and folders.
     Clean {

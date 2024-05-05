@@ -121,3 +121,7 @@ pub async fn update_beam_files(version: semver::Version, no_verify: bool) -> any
     tracing::trace!("Done.");
     Ok(())
 }
+
+pub fn matrix(_current: semver::Version, _project: semver::Version) {
+    todo!()
+}

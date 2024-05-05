@@ -9,5 +9,5 @@ fn main() {
     tar.finish().unwrap();
 
     println!("cargo:rustc-env=COMPRESSED_FILE={}", "../compressed.tar.gz");
-    println!("cargo:rerun-if-changed=docker,package")
+    println!("cargo:rerun-if-changed=package")
 }

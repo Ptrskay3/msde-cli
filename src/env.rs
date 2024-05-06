@@ -7,9 +7,10 @@
 //! - a sensible default (if exists)
 
 use anyhow::Context as _;
+use clap::ValueEnum;
 use std::{
     fs::File,
-    io::{BufReader, Write},
+    io::{BufReader, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -88,7 +89,7 @@ pub struct ProfileSpec {
     features: Vec<Feature>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Feature {
     OTEL,
@@ -143,7 +144,23 @@ impl Context {
     pub fn clean(&self) {
         std::fs::remove_dir_all(&self.config_dir).unwrap();
     }
+    pub fn write_profiles(&self, name: String, features: Vec<Feature>) -> anyhow::Result<()> {
+        let config_file = self.config_dir.join("config.json");
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .read(true)
+            .open(config_file)?;
 
+        let current = BufReader::new(&f);
+        let mut cfg: Config = serde_json::from_reader(current)?;
+        cfg.profiles.0.push(ProfileSpec { name, features });
+        let mut writer = std::io::BufWriter::new(f);
+        writer.rewind()?;
+
+        serde_json::to_writer(&mut writer, &cfg)?;
+        writer.flush()?;
+        Ok(())
+    }
     // TODO: Read if exists, and modify (maybe not even here, we should load Config into memory in init)
     pub fn write_config(&self, project_path: PathBuf) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;

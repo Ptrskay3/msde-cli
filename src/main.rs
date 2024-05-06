@@ -84,7 +84,8 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(Commands::GenerateCompletions)
+            None | Some(Commands::AddProfile { .. })
+                | Some(Commands::GenerateCompletions)
                 | Some(Commands::UpgradeProject { .. })
                 | Some(Commands::Clean { .. })
                 | Some(Commands::Init { .. })
@@ -659,6 +660,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut std::io::stdout(),
             );
         }
+        Some(Commands::AddProfile { name, features }) => {
+            ctx.write_profiles(name, features)
+                .context("Failed to write profile.")?;
+        }
         _ => tracing::debug!("not now.."),
     }
 
@@ -698,6 +703,12 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    AddProfile {
+        #[arg(short, long)]
+        name: String,
+        #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+        features: Vec<msde_cli::env::Feature>,
+    },
     GenerateCompletions,
     UpgradeProject {
         #[arg(short, long)]

@@ -674,7 +674,7 @@ fn completions_path(shell: &Shell) -> Option<&'static str> {
     match shell {
         Shell::Bash => Some("/usr/share/bash-completion/completions/msde-cli.bash"),
         Shell::Fish => Some("/usr/share/fish/vendor_completions.d/msde-cli.fish"),
-        Shell::Zsh => Some("/usr/share/zsh/site-functions/msde-cli"),
+        Shell::Zsh => Some("/usr/share/zsh/site-functions/_msde-cli"),
         // FIXME: not sure about others.
         _ => None,
     }

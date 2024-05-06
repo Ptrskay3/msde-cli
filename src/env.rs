@@ -31,6 +31,8 @@ pub fn msde_dir(home: PathBuf) -> anyhow::Result<(PathBuf, bool)> {
             let reader = BufReader::new(f);
             let config: Config = serde_json::from_reader(reader)?;
 
+            // TODO: This implicitly checks whether the path exists.
+            // Not sure this is good or bad..
             config
                 .merigo_dev_package_dir
                 .map(|p| p.canonicalize())
@@ -147,9 +149,12 @@ impl Context {
         self.msde_dir = project_path.clone();
     }
 
-    pub fn run_project_checks(&self, self_version: semver::Version) -> anyhow::Result<()> {
+    pub fn run_project_checks(
+        &self,
+        self_version: semver::Version,
+    ) -> anyhow::Result<Option<PackageLocalConfig>> {
         if !self.dir_set {
-            return Ok(());
+            return Ok(None);
         }
         let metadata_file = self.msde_dir.join("./metadata.json");
         anyhow::ensure!(metadata_file.exists(), "metadata file is missing");
@@ -165,6 +170,6 @@ impl Context {
                 "Project is version {project_version}, but CLI is version {self_version}."
             )
         }
-        Ok(())
+        Ok(Some(metadata))
     }
 }

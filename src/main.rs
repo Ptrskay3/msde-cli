@@ -268,11 +268,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| semver::Version::parse(s).unwrap())
         .unwrap();
 
-    if !matches!(&cmd.command, Some(Commands::Init { .. })) {
+    if !matches!(
+        &cmd.command,
+        // TODO: don't run this on some other commands. Probably refactor this whole block..
+        Some(Commands::Init { .. }) | Some(Commands::UpgradeProject { .. })
+    ) {
         match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
             (true, _) | (false, Ok(_)) => {
                 tracing::debug!(path = %ctx.msde_dir.display(), "Active project is at");
-                // TODO: don't run this on some commands. Probably refactor this whole block..
                 if let Err(e) = ctx.run_project_checks(self_version.clone()) {
                     tracing::warn!(error = %e, "project is invalid");
                 }
@@ -601,14 +604,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Offer an upgrade on a project directory, potentially leaving a /games directory unchanged.
         }
         Some(Commands::UpgradeProject { path }) => {
-            // TODO: probably a prompt would be better..
-            // TODO also: These checks are already implemented elsewhere.
             // Plan:
             // 1. Obtain the project path, and find metadata.json
-            let project_path = ctx
-                .explicit_project_path()
-                .or_else(|| path.as_ref())
-                .context("No active project path found.")?;
+            let project_path = path
+                .or_else(|| ctx.explicit_project_path().cloned())
+                .unwrap_or_else(|| {
+                    let p = Input::with_theme(&theme)
+                        .with_prompt("Where is the project located?")
+                        .default(
+                            msde_cli::env::home()
+                                .unwrap()
+                                .join("merigo")
+                                .to_string_lossy()
+                                .into_owned(),
+                        )
+                        .interact()
+                        .unwrap();
+                    PathBuf::from(p)
+                });
+            // TODO: These checks are already implemented elsewhere.
             tracing::debug!(path = %project_path.display(), "Upgrade project at");
             let config = project_path.join("metadata.json");
             let f = File::open(config)
@@ -619,11 +633,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } = serde_json::from_reader(reader)
                 .context("metadata.json file is invalid. Please rerun `msde_cli init`.")?;
+            // 2. Compare the current self_version and the metadata's version.
             let project_self_version = semver::Version::parse(&project_self_version).unwrap();
             println!(
                 "project self version {project_self_version:?} | self version {self_version:?}"
             );
-            // 2. Compare the current self_version and the metadata's version.
             // 3. Lookup the migration matrix function (which is TBD.).
             // 4. Write the changes to disk, or display migration steps that need to be done manually.
             // 5. Update the metadata.json.

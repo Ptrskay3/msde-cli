@@ -51,6 +51,50 @@ pub fn msde_dir(home: PathBuf) -> anyhow::Result<(PathBuf, bool)> {
 pub struct Config {
     #[serde(rename = "MERIGO_DEV_PACKAGE_DIR")]
     pub merigo_dev_package_dir: Option<PathBuf>,
+    pub profiles: Profiles,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[serde(transparent)]
+pub struct Profiles(Vec<ProfileSpec>);
+
+impl Default for Profiles {
+    fn default() -> Self {
+        Self(vec![
+            ProfileSpec {
+                name: "minimal".into(),
+                features: vec![],
+            },
+            ProfileSpec {
+                name: "default".into(),
+                features: vec![Feature::Metrics],
+            },
+            ProfileSpec {
+                name: "full".into(),
+                features: vec![
+                    Feature::Metrics,
+                    Feature::Web3,
+                    Feature::OTEL,
+                    Feature::Metrics,
+                ],
+            },
+        ])
+    }
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+pub struct ProfileSpec {
+    name: String,
+    features: Vec<Feature>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum Feature {
+    OTEL,
+    Metrics,
+    Web3,
+    Bot,
 }
 
 #[derive(Debug)]
@@ -116,6 +160,8 @@ impl Context {
             &mut writer,
             &Config {
                 merigo_dev_package_dir: Some(project_path),
+                // TODO: don't always write the default
+                profiles: Default::default(),
             },
         )?;
         writer.flush()?;

@@ -668,7 +668,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn completions_path(shell: &Shell) -> Option<&'static str> {
     match shell {
         Shell::Bash => Some("/usr/share/bash-completion/completions/msde-cli.bash"),
-        Shell::Fish => Some("~/.config/fish/completions/msde-cli.fish"),
+        Shell::Fish => Some("/usr/share/fish/vendor_completions.d/msde-cli.fish"),
+        Shell::Zsh => Some("/usr/share/zsh/site-functions/msde-cli"),
         // FIXME: not sure about others.
         _ => None,
     }

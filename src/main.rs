@@ -245,6 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with(
             tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
                 .without_time()
                 .with_target(false),
         )
@@ -651,7 +652,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             todo!();
         }
         Some(Commands::GenerateCompletions) => {
-            // TODO: This isn't working, tracing output messes all of this up..
             generate(
                 current_shell,
                 &mut <Command as clap::CommandFactory>::command(),

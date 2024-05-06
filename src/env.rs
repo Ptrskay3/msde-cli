@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use std::{
     fs::File,
     io::{BufReader, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 pub fn home() -> anyhow::Result<PathBuf> {
@@ -145,8 +145,8 @@ impl Context {
         Ok(())
     }
 
-    pub fn set_project_path(&mut self, project_path: &PathBuf) {
-        self.msde_dir = project_path.clone();
+    pub fn set_project_path(&mut self, project_path: impl AsRef<Path>) {
+        self.msde_dir = project_path.as_ref().to_path_buf()
     }
 
     pub fn run_project_checks(

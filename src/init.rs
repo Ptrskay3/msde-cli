@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 pub fn ensure_access() -> anyhow::Result<()> {
     todo!()
@@ -15,7 +15,8 @@ pub fn ensure_project() -> anyhow::Result<()> {
     todo!()
 }
 
-pub fn ensure_valid_project_path(path: &PathBuf, force: bool) -> anyhow::Result<()> {
+pub fn ensure_valid_project_path(path: impl AsRef<Path>, force: bool) -> anyhow::Result<()> {
+    let path = path.as_ref();
     if path.exists() {
         if path.is_dir() && path.read_dir()?.next().is_some() && !force {
             anyhow::bail!("The given directory is not empty. Use `--force` to ignore.")

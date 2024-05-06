@@ -9,5 +9,5 @@ fn main() {
     tar.append_dir_all("./", "./package").unwrap();
     tar.finish().unwrap();
 
-    println!("cargo:rustc-env=COMPRESSED_FILE={}", "../compressed.tar.gz");
+    println!("cargo:rustc-env=COMPRESSED_FILE=../compressed.tar.gz");
 }

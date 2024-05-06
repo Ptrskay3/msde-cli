@@ -8,8 +8,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use clap::ValueEnum;
 use clap::{ArgAction, Parser, Subcommand};
-// TODO: The generate function is interesting.
-use clap_complete::shells::Shell;
+use clap_complete::{generate, shells::Shell};
 // May work better!
 // https://github.com/fussybeaver/bollard
 use dialoguer::Input;
@@ -34,7 +33,7 @@ fn shell_configure_message(shell: &Shell) -> &'static str {
     match shell {
         Shell::Bash => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.bashrc",
         Shell::Fish => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.config/fish/config.fish",
-        Shell::Zsh => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> {} ~/.zshrc",
+        Shell::Zsh => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.zshrc",
         Shell::PowerShell => "[System.Environment]::SetEnvironmentVariable('MERIGO_DEV_PACKAGE_DIR', 'C:\\path\\to\\package', 'User')",
         Shell::Elvish => todo!(),
         _ => todo!(),
@@ -85,7 +84,8 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(Commands::UpgradeProject { .. })
+            None | Some(Commands::GenerateCompletions)
+                | Some(Commands::UpgradeProject { .. })
                 | Some(Commands::Clean { .. })
                 | Some(Commands::Init { .. })
                 | Some(Commands::BuildCache { .. })
@@ -284,6 +284,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::warn!("The developer package is not yet configured.");
                 tracing::warn!("To configure, you may use the `init` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable:");
                 tracing::warn!("{}", shell_configure_message(&current_shell));
+                tracing::warn!("You may also install completions by running:");
+                if let Some(completion_path) = completions_path(&current_shell) {
+                    tracing::warn!("`msde-cli generate-completions > {}`", completion_path);
+                } else {
+                    tracing::warn!("`msde-cli generate-completions`, then redirect its output to your shell's completion path.");
+                }
             }
         }
     }
@@ -644,10 +650,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 6. Optionally display a warning message if the current project is not using the right self_version.
             todo!();
         }
+        Some(Commands::GenerateCompletions) => {
+            // TODO: This isn't working, tracing output messes all of this up..
+            generate(
+                current_shell,
+                &mut <Command as clap::CommandFactory>::command(),
+                "msde-cli",
+                &mut std::io::stdout(),
+            );
+        }
         _ => tracing::debug!("not now.."),
     }
 
     Ok(())
+}
+
+fn completions_path(shell: &Shell) -> Option<&'static str> {
+    match shell {
+        Shell::Bash => Some("/usr/share/bash-completion/completions/msde-cli.bash"),
+        Shell::Fish => Some("~/.config/fish/completions/msde-cli.fish"),
+        // FIXME: not sure about others.
+        _ => None,
+    }
 }
 
 #[derive(Debug)]
@@ -673,6 +697,7 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    GenerateCompletions,
     UpgradeProject {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,

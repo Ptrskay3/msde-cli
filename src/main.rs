@@ -84,17 +84,19 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(Commands::AddProfile { .. })
-                | Some(Commands::GenerateCompletions)
-                | Some(Commands::UpgradeProject { .. })
-                | Some(Commands::Clean { .. })
-                | Some(Commands::Init { .. })
-                | Some(Commands::BuildCache { .. })
-                | Some(Commands::Login { .. })
-                | Some(Commands::Containers { .. })
-                | Some(Commands::Exec { .. })
-                | Some(Commands::UpdateBeamFiles { .. })
-                | Some(Commands::VerifyBeamFiles { .. })
+            None | Some(
+                Commands::AddProfile { .. }
+                    | Commands::GenerateCompletions { .. }
+                    | Commands::UpgradeProject { .. }
+                    | Commands::Clean { .. }
+                    | Commands::Init { .. }
+                    | Commands::BuildCache { .. }
+                    | Commands::Login { .. }
+                    | Commands::Containers { .. }
+                    | Commands::Exec { .. }
+                    | Commands::UpdateBeamFiles { .. }
+                    | Commands::VerifyBeamFiles { .. }
+            )
         )
     }
 }
@@ -273,7 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !matches!(
         &cmd.command,
         // TODO: don't run this on some other commands. Probably refactor this whole block..
-        Some(Commands::Init { .. }) | Some(Commands::UpgradeProject { .. })
+        Some(Commands::Init { .. } | Commands::UpgradeProject { .. })
     ) {
         match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
             (true, _) | (false, Ok(_)) => {
@@ -287,8 +289,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::warn!("To configure, you may use the `init` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable:");
                 tracing::warn!("{}", shell_configure_message(&current_shell));
                 tracing::warn!("You may also install completions by running:");
-                if let Some(completion_path) = completions_path(&current_shell) {
-                    tracing::warn!("`msde-cli generate-completions > {}`", completion_path);
+                if let Some(completion_path) = completions_path(current_shell) {
+                    tracing::warn!(
+                        "`msde-cli generate-completions | sudo tee {}`",
+                        completion_path
+                    );
                 } else {
                     tracing::warn!("`msde-cli generate-completions`, then redirect its output to your shell's completion path.");
                 }
@@ -421,7 +426,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let tasks = running.into_iter().map(|container| async {
                     match docker.containers().get(container.id).stop(&opts).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             let name = container.names.unwrap_or_default();
                             println!("Container {:?} stopped...", name);
                             Ok(())
@@ -652,9 +657,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 6. Optionally display a warning message if the current project is not using the right self_version.
             todo!();
         }
-        Some(Commands::GenerateCompletions) => {
+        Some(Commands::GenerateCompletions { shell }) => {
             generate(
-                current_shell,
+                shell.unwrap_or(current_shell),
                 &mut <Command as clap::CommandFactory>::command(),
                 "msde-cli",
                 &mut std::io::stdout(),
@@ -670,7 +675,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn completions_path(shell: &Shell) -> Option<&'static str> {
+fn completions_path(shell: Shell) -> Option<&'static str> {
     match shell {
         Shell::Bash => Some("/usr/share/bash-completion/completions/msde-cli.bash"),
         Shell::Fish => Some("/usr/share/fish/vendor_completions.d/msde-cli.fish"),
@@ -709,7 +714,18 @@ enum Commands {
         #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
         features: Vec<msde_cli::env::Feature>,
     },
-    GenerateCompletions,
+    /// Generate shell auto-completions for this CLI tool.
+    ///
+    /// This command writes auto-completions to stdout, so users are encouraged to pipe it to a file.
+    ///
+    /// Example:
+    ///
+    /// > msde-cli generate-completions | sudo tee /usr/share/bash-completion/completions/msde-cli.bash
+    GenerateCompletions {
+        /// The target shell to generate auto-completions for. If not given, the current shell will be detected.
+        #[arg(short, long)]
+        shell: Option<Shell>,
+    },
     UpgradeProject {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,

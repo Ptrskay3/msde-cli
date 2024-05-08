@@ -21,13 +21,13 @@ pub fn home() -> anyhow::Result<PathBuf> {
     }
 }
 
-pub fn msde_dir(home: PathBuf) -> anyhow::Result<(PathBuf, bool)> {
-    let mut dir_set = true;
-    let path = std::env::var("MERIGO_DEV_PACKAGE_DIR")
+// TODO: Accept the config file as argument, don't open it here.
+pub fn msde_dir(home: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
+    std::env::var("MERIGO_DEV_PACKAGE_DIR")
         .map(PathBuf::from)
         .or_else(|_| {
             // TODO: Don't open and deserialize this file here..
-            let config = home.join(".msde/config.json");
+            let config = home.as_ref().join(".msde/config.json");
             let f = File::open(config)?;
             let reader = BufReader::new(f);
             let config: Config = serde_json::from_reader(reader)?;
@@ -41,11 +41,6 @@ pub fn msde_dir(home: PathBuf) -> anyhow::Result<(PathBuf, bool)> {
                 .map_err(|_| anyhow::Error::msg("invalid path"))?
                 .map_err(|_| anyhow::Error::msg("invalid config"))
         })
-        .or_else(|_: anyhow::Error| {
-            dir_set = false;
-            Ok(home.join("merigo"))
-        });
-    path.map(|p| (p, dir_set))
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
@@ -100,12 +95,11 @@ pub enum Feature {
 
 #[derive(Debug)]
 pub struct Context {
+    pub home: PathBuf,
     pub config_dir: PathBuf,
-    pub msde_dir: PathBuf,
+    pub msde_dir: Option<PathBuf>,
     pub version: Option<semver::Version>,
     pub authorization: Option<Authorization>,
-    /// Whether the working directory was explicitly set by the user by any means.
-    pub dir_set: bool,
     // TODO: read this in init, if exists.
     pub config: Option<Config>,
 }
@@ -125,25 +119,46 @@ impl Context {
     pub fn from_env() -> anyhow::Result<Self> {
         let home = home()?;
         let config_dir = home.join(".msde");
-        std::fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
-        let (msde_dir, dir_set) = msde_dir(home).expect("to be valid");
+        std::fs::create_dir_all(&config_dir).with_context(|| {
+            format!(
+                "Failed to create config directory at {}",
+                config_dir.display()
+            )
+        })?;
+        let msde_dir = msde_dir(&home).ok();
+        let config = {
+            let config_file = config_dir.join("config.json");
+            if let Ok(f) = File::open(config_file) {
+                let reader = std::io::BufReader::new(f);
+                match serde_json::from_reader(reader) {
+                    Ok(config) => Some(config),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "config file seems to be broken.");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
         Ok(Self {
+            home,
             config_dir,
             msde_dir,
             version: None,
             authorization: None,
-            dir_set,
-            config: None,
+            config,
         })
     }
 
     pub fn explicit_project_path(&self) -> Option<&PathBuf> {
-        self.dir_set.then_some(&self.msde_dir)
+        self.msde_dir.as_ref()
     }
 
     pub fn clean(&self) {
         std::fs::remove_dir_all(&self.config_dir).unwrap();
     }
+
     pub fn write_profiles(&self, name: String, features: Vec<Feature>) -> anyhow::Result<()> {
         let config_file = self.config_dir.join("config.json");
         let f = std::fs::OpenOptions::new()
@@ -162,6 +177,7 @@ impl Context {
         Ok(())
     }
     // TODO: Read if exists, and modify (maybe not even here, we should load Config into memory in init)
+    // if we load it into memory on init, we may just pass the current value down from main to here, so we don't need to read again.
     pub fn write_config(&self, project_path: PathBuf) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
         let config_file = self.config_dir.join("config.json");
@@ -186,8 +202,12 @@ impl Context {
     }
 
     pub fn write_package_local_config(&self, self_version: semver::Version) -> anyhow::Result<()> {
-        std::fs::create_dir_all(&self.msde_dir)?;
-        let config_file = self.msde_dir.join("metadata.json");
+        let msde_dir = self
+            .msde_dir
+            .as_ref()
+            .context("Package location is unknown")?;
+        std::fs::create_dir_all(&msde_dir)?;
+        let config_file = msde_dir.join("metadata.json");
         let f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -209,17 +229,17 @@ impl Context {
     }
 
     pub fn set_project_path(&mut self, project_path: impl AsRef<Path>) {
-        self.msde_dir = project_path.as_ref().to_path_buf()
+        self.msde_dir = Some(project_path.as_ref().to_path_buf())
     }
 
     pub fn run_project_checks(
         &self,
         self_version: semver::Version,
     ) -> anyhow::Result<Option<PackageLocalConfig>> {
-        if !self.dir_set {
+        let Some(msde_dir) = self.msde_dir.as_ref() else {
             return Ok(None);
-        }
-        let metadata_file = self.msde_dir.join("./metadata.json");
+        };
+        let metadata_file = msde_dir.join("./metadata.json");
         anyhow::ensure!(metadata_file.exists(), "metadata file is missing");
         let f = std::fs::OpenOptions::new().read(true).open(metadata_file)?;
 

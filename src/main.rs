@@ -18,6 +18,7 @@ use docker_api::Docker;
 use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use msde_cli::env::PackageLocalConfig;
+use msde_cli::init::ensure_valid_project_path;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 use sysinfo::System;
@@ -27,17 +28,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct MetadataResponse {
     name: String,
     tags: Vec<String>,
-}
-
-fn shell_configure_message(shell: &Shell) -> &'static str {
-    match shell {
-        Shell::Bash => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.bashrc",
-        Shell::Fish => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.config/fish/config.fish",
-        Shell::Zsh => "echo 'export MERIGO_DEV_PACKAGE_DIR=/path/to/package' >> ~/.zshrc",
-        Shell::PowerShell => "[System.Environment]::SetEnvironmentVariable('MERIGO_DEV_PACKAGE_DIR', 'C:\\path\\to\\package', 'User')",
-        Shell::Elvish => todo!(),
-        _ => todo!(),
-    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -85,7 +75,10 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::AddProfile { .. }
+                Commands::Docs
+                    | Commands::Status
+                    | Commands::AddProfile { .. }
+                    | Commands::SetProject { .. }
                     | Commands::GenerateCompletions { .. }
                     | Commands::UpgradeProject { .. }
                     | Commands::Clean { .. }
@@ -265,8 +258,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::trace!(?ctx, "context");
 
     let cmd = Command::parse();
-    // TODO: Check how fallible this is.
-    // Use this to provide an upgrade project command.
     let self_version = <Command as clap::CommandFactory>::command()
         .get_version()
         .map(|s| semver::Version::parse(s).unwrap())
@@ -277,21 +268,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // TODO: don't run this on some other commands. Probably refactor this whole block..
         Some(Commands::Init { .. } | Commands::UpgradeProject { .. })
     ) {
-        match (ctx.dir_set, std::env::var("MERIGO_NOWARN_INIT")) {
-            (true, _) | (false, Ok(_)) => {
-                tracing::debug!(path = %ctx.msde_dir.display(), "Active project is at");
-                if let Err(e) = ctx.run_project_checks(self_version.clone()) {
+        match (ctx.msde_dir.as_ref(), std::env::var("MERIGO_NOWARN_INIT")) {
+            (Some(msde_dir), _) => {
+                tracing::info!(path = %msde_dir.display(), "Active project is at");
+                if let Err(e) = &ctx.run_project_checks(self_version.clone()) {
                     tracing::warn!(error = %e, "project is invalid");
                 }
             }
-            (false, _) => {
+            (None, Ok(_)) => {}
+            (None, _) => {
+                // TODO: If we generate completions, it's very confusing still to see this output on stderr, since it may hide the sudo password prompt..
                 tracing::warn!("The developer package is not yet configured.");
-                tracing::warn!("To configure, you may use the `init` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable:");
-                tracing::warn!("{}", shell_configure_message(&current_shell));
-                tracing::warn!("You may also install completions by running:");
+                tracing::warn!("To configure, you may use the `init` or `set-project` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable.");
+                tracing::warn!("You may also install auto-completions by running:");
                 if let Some(completion_path) = completions_path(current_shell) {
                     tracing::warn!(
-                        "`msde-cli generate-completions | sudo tee {}`",
+                        "`msde-cli generate-completions | sudo tee {} > /dev/null`",
                         completion_path
                     );
                 } else {
@@ -571,20 +563,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Available local Merigo related images are:\n{local_image_stats:#?}");
         }
         Some(Commands::Clean { always_yes }) => {
-            // TODO: Undo init.
-            let should_exit = if !always_yes {
-                println!("About to remove {:?}", ctx.config_dir);
-                println!("This is an irreversible action.");
-                !handle_yes_no_prompt()
-            } else {
-                false
-            };
+            // TODO: Also remove the msde_dir if set
+            println!("About to remove {:?}", ctx.config_dir);
 
-            if should_exit {
-                println!("exiting");
-                return Ok(());
+            let proceed = match always_yes {
+                true => true,
+                false => dialoguer::Confirm::with_theme(&theme)
+                    .with_prompt("This is an irreversible action. Are you sure to continue?")
+                    .wait_for_newline(true)
+                    .default(false)
+                    .show_default(true)
+                    .report(true)
+                    .interact()?,
+            };
+            if proceed {
+                msde_cli::env::Context::clean(&ctx);
             }
-            msde_cli::env::Context::clean(&ctx);
         }
         Some(Commands::Up {}) => {
             msde_cli::compose::Compose::up_builtin(None)?;
@@ -596,8 +590,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let target = path.unwrap_or_else(|| {
                 let res: String = Input::with_theme(&theme)
                     .with_prompt("Where should the project be initialized?\nInput a directory, or press enter to accept the default.")
-                    // FIXME: Horrible default, probably move this to the Context struct
-                    .default(msde_cli::env::home().unwrap().join("merigo").to_string_lossy().into_owned())
+                    .default(ctx.home.join("merigo").to_string_lossy().into_owned())
                     .interact_text()
                     .unwrap();
                 PathBuf::from(res)
@@ -614,7 +607,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ctx.write_config(target.canonicalize().unwrap())?;
             ctx.write_package_local_config(self_version)?;
             tracing::info!(path = %target.display(), "Successfully initialized project at");
-            // Offer an upgrade on a project directory, potentially leaving a /games directory unchanged.
         }
         Some(Commands::UpgradeProject { path }) => {
             // Plan:
@@ -655,6 +647,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 4. Write the changes to disk, or display migration steps that need to be done manually.
             // 5. Update the metadata.json.
             // 6. Optionally display a warning message if the current project is not using the right self_version.
+            tracing::info!("Automatic update done.");
             todo!();
         }
         Some(Commands::GenerateCompletions { shell }) => {
@@ -668,6 +661,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::AddProfile { name, features }) => {
             ctx.write_profiles(name, features)
                 .context("Failed to write profile.")?;
+        }
+        Some(Commands::SetProject { path }) => {
+            let path = path.unwrap_or_else(|| {
+                let p = Input::<'_, String>::with_theme(&theme)
+                    .with_prompt("Where is the project located?")
+                    .interact()
+                    .unwrap();
+                PathBuf::from(p)
+            });
+            ensure_valid_project_path(&path, true)
+                .context("Project directory seems to be invalid")?;
+            // TODO: run_project_checks here, but with the given path, not ctx.msde_dir
+            ctx.write_config(path)?;
+        }
+        Some(Commands::Status) => {
+            // TODO: A lot of things here.
+            println!("Merigo developer package version {self_version}");
+        }
+        Some(Commands::Docs) => {
+            webbrowser::open("https://docs.merigo.co/getting-started/devpackage")
+                .context("failed to open a browser")?;
         }
         _ => tracing::debug!("not now.."),
     }
@@ -708,6 +722,12 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    Docs,
+    Status,
+    SetProject {
+        #[arg(index = 1)]
+        path: Option<PathBuf>,
+    },
     AddProfile {
         #[arg(short, long)]
         name: String,
@@ -758,6 +778,10 @@ enum Commands {
     Ssh,
     Shell,
     /// Initialize the MSDE developer package.
+    ///
+    /// This command will not delete any files, but will override anything in the target directory if the package content
+    /// conflicts with an existing file.
+    /// For that exact reason a non-empty directory will be rejected, unless the --force flag is present.
     Init {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,

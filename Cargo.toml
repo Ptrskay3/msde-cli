@@ -37,6 +37,9 @@ tar = "0.4"
 dialoguer = "0.11.0"
 console = "0.15.8"
 
+[build-dependencies]
+flate2 = "1.0"
+tar = "0.4"
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
@@ -46,13 +49,13 @@ lto = "thin"
 # Config for 'cargo dist'
 [workspace.metadata.dist]
 # The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.13.3"
+cargo-dist-version = "0.14.0"
 # The installers to generate for each app
 installers = ["shell", "homebrew", "msi"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # CI backends to support
-ci = ["github"]
+ci = "github"
 # Publish jobs to run in CI
 pr-run-mode = "plan"
 # A GitHub repo to push Homebrew formulas to
@@ -61,13 +64,16 @@ tap = "Ptrskay3/homebrew-tap"
 publish-jobs = ["homebrew"]
 # Whether to install an updater program
 install-updater = true
+# TODO: add these if we're ready to publish from the real Merigo account
+# github-releases-repo = "merigo-co/cli"
+# source-tarball = false
 
 [package.metadata.bundle]
 name = "MSDE-CLI"
 identifier = "msde.cli"
 icon = ["32x32.png", "128x128.png", "128x128@2x.png"]
 version = "0.1.0"
-copyright = "Copyright (c) Merigo Inc 2023. All rights reserved."
+copyright = "Copyright (c) Merigo Inc 2024. All rights reserved."
 category = "Developer Tool"
 short_description = "CLI tool for running the Merigo Dev package."
 long_description = """
@@ -80,7 +86,3 @@ upgrade-guid = "88E9817A-22F6-45F8-9257-FCD20FAE5E88"
 path-guid = "67B68274-A125-4D30-8744-B2D32589F7A7"
 license = false
 eula = false
-
-[build-dependencies]
-flate2 = "1.0"
-tar = "0.4"

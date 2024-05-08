@@ -3,11 +3,22 @@ use std::process::{Command, Stdio};
 pub struct Compose;
 
 #[derive(Default)]
-pub struct ComposeOpts;
+pub struct ComposeOpts<'a> {
+    daemon: bool,
+    target: Option<&'a str>,
+}
 
-impl ComposeOpts {
-    fn into_args<'a>(self) -> Vec<&'a str> {
-        Vec::new()
+impl<'a> ComposeOpts<'a> {
+    fn into_args(self) -> Vec<&'a str> {
+        let mut args = vec![];
+        if self.daemon {
+            args.push("-d");
+        }
+        if let Some(target) = self.target {
+            args.push(target)
+        }
+
+        args
     }
 }
 

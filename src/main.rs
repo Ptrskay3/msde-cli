@@ -4,6 +4,7 @@ use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::ValueEnum;
@@ -17,6 +18,8 @@ use docker_api::opts::ContainerStopOpts;
 use docker_api::Docker;
 use flate2::bufread::GzDecoder;
 use futures::StreamExt;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use msde_cli::env::PackageLocalConfig;
 use msde_cli::init::ensure_valid_project_path;
 use secrecy::ExposeSecret;
@@ -95,7 +98,6 @@ impl Command {
 }
 
 const LATEST: &str = "latest";
-const CLEAR: &str = "\x1B[2J\x1B[1;1H";
 const USER: &str = "merigo-client";
 const DEFAULT_DURATION: i64 = 12;
 
@@ -114,7 +116,7 @@ struct ListedContainer {
     image: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 struct SecretCredentials {
     ghcr_key: Secret<String>,
     pull_key: Secret<String>,
@@ -438,10 +440,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("There shouldn't be any running containers now.");
         }
-        Some(Commands::Pull { target }) => {
+        Some(Commands::Pull { target, version }) => {
             let credentials =
                 try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-            pull(&docker, &target, cmd.no_build_cache, credentials).await?;
+            if let Some(target) = target {
+                let pb = progress_bar();
+                pull(&docker, target, cmd.no_build_cache, &credentials, pb).await?;
+            } else {
+                let m = indicatif::MultiProgress::new();
+
+                let mut tasks = vec![];
+                let targets = vec![
+                    Target::Msde {
+                        version: version.clone(),
+                    },
+                    Target::Compiler {
+                        version: version.clone(),
+                    },
+                    Target::Bot {
+                        version: version.clone(),
+                    },
+                    Target::Web3 {
+                        version,
+                        kind: Some(Web3Kind::All),
+                    },
+                ];
+                for target in targets {
+                    let pb = m.add(progress_bar());
+
+                    tasks.push(pull(&docker, target, cmd.no_build_cache, &credentials, pb));
+                }
+                futures::future::try_join_all(tasks).await.map_err(|e| {
+                    m.clear().unwrap();
+                    e
+                })?;
+                m.clear().unwrap();
+                // FIXME: this message doesn't care about the outcome
+                tracing::info!("All targets pulled!")
+            }
         }
         Some(Commands::Login {
             ghcr_key,
@@ -566,15 +602,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // TODO: Also remove the msde_dir if set
             println!("About to remove {:?}", ctx.config_dir);
 
-            let proceed = match always_yes {
-                true => true,
-                false => dialoguer::Confirm::with_theme(&theme)
+            let proceed = if always_yes {
+                true
+            } else {
+                dialoguer::Confirm::with_theme(&theme)
                     .with_prompt("This is an irreversible action. Are you sure to continue?")
                     .wait_for_newline(true)
                     .default(false)
                     .show_default(true)
                     .report(true)
-                    .interact()?,
+                    .interact()?
             };
             if proceed {
                 msde_cli::env::Context::clean(&ctx);
@@ -672,7 +709,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             ensure_valid_project_path(&path, true)
                 .context("Project directory seems to be invalid")?;
-            // TODO: run_project_checks here, but with the given path, not ctx.msde_dir
+            ctx.set_project_path(&path);
+            ctx.run_project_checks(self_version)?;
             ctx.write_config(path)?;
         }
         Some(Commands::Status) => {
@@ -770,10 +808,14 @@ enum Commands {
         #[command(subcommand)]
         target: Target,
     },
-    /// Pull the latest docker image of the target service.
+    /// Pull the latest docker image of the target service(s).
     Pull {
         #[command(subcommand)]
-        target: Target,
+        target: Option<Target>,
+
+        // the "version" argument in the other subcommand (kind of confusing)
+        #[arg(short, long, required_unless_present = "version")]
+        version: Option<String>,
     },
     Ssh,
     Shell,
@@ -842,6 +884,7 @@ enum Commands {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Subcommand)]
+#[command(subcommand_negates_reqs = true)]
 enum Target {
     Msde {
         #[arg(short, long)]
@@ -888,7 +931,7 @@ impl Target {
                     Some(version) => format!("{self}-vm-dev-docker-{version}"),
                     None => "latest".to_owned(),
                 };
-                tracing::debug!(%tag, "assembled tag is");
+                tracing::trace!(%tag, "assembled tag is");
 
                 vec![(
                     format!("docker.pkg.github.com/merigo-co/merigo_dev_packages/{self}-vm-dev"),
@@ -900,7 +943,7 @@ impl Target {
                     Some(version) => version.to_string(),
                     None => LATEST.to_owned(),
                 };
-                tracing::debug!(%tag, "assembled tag is");
+                tracing::trace!(%tag, "assembled tag is");
 
                 vec![
                     (
@@ -961,13 +1004,17 @@ fn handle_yes_no_prompt() -> bool {
     }
 }
 
+#[tracing::instrument(skip(docker, no_cache, credentials, pb))]
 async fn pull(
     docker: &Docker,
-    target: &Target,
+    target: Target,
     no_cache: bool,
-    credentials: SecretCredentials,
+    credentials: &SecretCredentials,
+    pb: ProgressBar,
 ) -> anyhow::Result<()> {
     tracing::trace!(%target, "attempting to pull an image.. ");
+    let mut errored = false;
+
     let version = target.get_version();
 
     if !no_cache {
@@ -979,7 +1026,7 @@ async fn pull(
             let entry = index
                 .content
                 .iter()
-                .find(|metadata| metadata.for_target(target))
+                .find(|metadata| metadata.for_target(&target))
                 .unwrap();
             if !entry.contains_version(version) {
                 tracing::warn!(%target, %version, available_versions = ?entry.parsed_versions.iter(), "Specified unknown version for target");
@@ -988,10 +1035,11 @@ async fn pull(
     }
 
     let images_and_tags = target.images_and_tags();
+    // TODO: Move this loop probably outside of the pull function. It messes up the progress bars if there're more than one image.
     for (image, tag) in images_and_tags {
         let opts = docker_api::opts::PullOpts::builder()
-            .image(image)
-            .tag(tag)
+            .image(&image)
+            .tag(&tag)
             .auth(
                 docker_api::opts::RegistryAuth::builder()
                     .username(USER)
@@ -1002,29 +1050,56 @@ async fn pull(
 
         let images = docker.images();
         let mut stream = images.pull(&opts);
+
+        pb.set_message(format!("Pulling image {}:{}", &image, &tag));
         while let Some(pull_result) = stream.next().await {
             match pull_result {
-                Ok(output) => {
-                    if let docker_api::models::ImageBuildChunk::PullStatus {
-                        progress,
-                        status,
-                        ..
-                    } = output
-                    {
-                        if let Some(progress) = progress {
-                            println!("{CLEAR}{progress}");
-                        } else {
-                            println!("{status}");
-                        }
+                Ok(output) => match output {
+                    docker_api::models::ImageBuildChunk::Error {
+                        error,
+                        error_detail,
+                    } => {
+                        pb.suspend(|| {
+                            tracing::error!(err = ?error, detail = ?error_detail, "Error occurred");
+                        });
+                        errored = true;
+                        pb.finish_with_message(
+                            "Error pulling image. Errors should be logged above.",
+                        );
+                        break;
                     }
-                }
+
+                    docker_api::models::ImageBuildChunk::PullStatus { .. } => {
+                        pb.inc(1);
+                    }
+                    _ => {}
+                },
                 Err(e) => {
-                    tracing::error!(err = ?e, "Error occurred");
+                    pb.suspend(|| tracing::error!(err = ?e, "Error occurred"));
+                    errored = true;
+                    pb.finish_with_message("Error pulling image. Errors should be logged above.");
                     break;
                 }
             }
         }
     }
+    if !errored {
+        pb.finish_with_message("Done.");
+    }
 
     Ok(())
+}
+
+fn progress_bar() -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(80));
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.blue} {elapsed:3} {msg}")
+            .unwrap()
+            .tick_strings(&[
+                "[    ]", "[=   ]", "[==  ]", "[=== ]", "[====]", "[ ===]", "[  ==]", "[   =]",
+                "[    ]", "[   =]", "[  ==]", "[ ===]", "[====]", "[=== ]", "[==  ]", "[=   ]",
+            ]),
+    );
+    pb
 }

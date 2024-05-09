@@ -206,7 +206,7 @@ impl Context {
             .msde_dir
             .as_ref()
             .context("Package location is unknown")?;
-        std::fs::create_dir_all(&msde_dir)?;
+        std::fs::create_dir_all(msde_dir)?;
         let config_file = msde_dir.join("metadata.json");
         let f = std::fs::OpenOptions::new()
             .write(true)

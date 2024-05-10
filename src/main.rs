@@ -67,7 +67,7 @@ struct Command {
 
     /// Skip building a local cache of the MSDE image registry.
     #[arg(short, long)]
-    no_build_cache: bool,
+    no_cache: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -167,7 +167,7 @@ async fn create_index(
     credentials: SecretCredentials,
 ) -> anyhow::Result<()> {
     let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
-
+    // TODO: Take the config struct into account.
     std::fs::create_dir_all(".msde").context("Failed to create cache directory")?;
 
     let key = credentials.ghcr_key.expose_secret();
@@ -274,7 +274,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             (Some(msde_dir), _) => {
                 tracing::info!(path = %msde_dir.display(), "Active project is at");
                 if let Err(e) = &ctx.run_project_checks(self_version.clone()) {
-                    tracing::warn!(error = %e, "project is invalid");
+                    tracing::warn!(error = %e, "project is invalid"); // TODO: suggest upgrade if version mismatch.. probably thiserror is required here
                 }
             }
             (None, Ok(_)) => {}
@@ -302,7 +302,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::trace!("connected");
     let client = reqwest::Client::new();
 
-    if !&cmd.no_build_cache {
+    if !&cmd.no_cache {
         match (
             cmd.should_ignore_credentials(),
             std::fs::File::open(".msde/index.json"),
@@ -445,7 +445,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
             if let Some(target) = target {
                 let pb = progress_bar();
-                pull(&docker, target, cmd.no_build_cache, &credentials, pb).await?;
+                pull(&docker, target, cmd.no_cache, &credentials, pb).await?;
             } else {
                 let m = indicatif::MultiProgress::new();
 
@@ -468,15 +468,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for target in targets {
                     let pb = m.add(progress_bar());
 
-                    tasks.push(pull(&docker, target, cmd.no_build_cache, &credentials, pb));
+                    tasks.push(pull(&docker, target, cmd.no_cache, &credentials, pb));
                 }
-                futures::future::try_join_all(tasks).await.map_err(|e| {
+                let outcome = futures::future::try_join_all(tasks).await.map_err(|e| {
                     m.clear().unwrap();
                     e
                 })?;
                 m.clear().unwrap();
-                // FIXME: this message doesn't care about the outcome
-                tracing::info!("All targets pulled!")
+                if outcome.iter().all(|x| *x) {
+                    tracing::info!("All targets pulled!")
+                } else {
+                    tracing::error!("Error pulling some of the images. Check errors above.");
+                }
             }
         }
         Some(Commands::Login {
@@ -1011,7 +1014,7 @@ async fn pull(
     no_cache: bool,
     credentials: &SecretCredentials,
     pb: ProgressBar,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     tracing::trace!(%target, "attempting to pull an image.. ");
     let mut errored = false;
 
@@ -1085,9 +1088,10 @@ async fn pull(
     }
     if !errored {
         pb.finish_with_message("Done.");
+        return Ok(true);
     }
 
-    Ok(())
+    Ok(false)
 }
 
 fn progress_bar() -> ProgressBar {

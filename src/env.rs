@@ -9,7 +9,7 @@
 use anyhow::Context as _;
 use clap::ValueEnum;
 use std::{
-    fs::File,
+    fs,
     io::{BufReader, Seek, Write},
     path::{Path, PathBuf},
 };
@@ -21,36 +21,25 @@ pub fn home() -> anyhow::Result<PathBuf> {
     }
 }
 
-// TODO: Accept the config file as argument, don't open it here.
-pub fn msde_dir(home: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
+pub fn msde_dir(config: Option<&Config>) -> anyhow::Result<PathBuf> {
     std::env::var("MERIGO_DEV_PACKAGE_DIR")
         .map(PathBuf::from)
         .or_else(|_| {
-            // TODO: Don't open and deserialize this file here..
-            let config = home.as_ref().join(".msde/config.json");
-            let f = File::open(config)?;
-            let reader = BufReader::new(f);
-            let config: Config = serde_json::from_reader(reader)?;
-
-            // TODO: This implicitly checks whether the path exists.
-            // Not sure this is good or bad..
             config
-                .merigo_dev_package_dir
-                .map(|p| p.canonicalize())
-                .ok_or(anyhow::Error::msg("invalid config"))
-                .map_err(|_| anyhow::Error::msg("invalid path"))?
-                .map_err(|_| anyhow::Error::msg("invalid config"))
+                .and_then(|c| c.merigo_dev_package_dir.clone())
+                .map(|path| path.canonicalize().map_err(Into::into))
+                .ok_or_else(|| anyhow::Error::msg("unspecified project path"))?
         })
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Default, Clone)]
 pub struct Config {
     #[serde(rename = "MERIGO_DEV_PACKAGE_DIR")]
     pub merigo_dev_package_dir: Option<PathBuf>,
     pub profiles: Profiles,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 #[serde(transparent)]
 pub struct Profiles(Vec<ProfileSpec>);
 
@@ -63,7 +52,7 @@ impl Default for Profiles {
             },
             ProfileSpec {
                 name: "default".into(),
-                features: vec![Feature::Metrics],
+                features: vec![Feature::Metrics, Feature::Web3],
             },
             ProfileSpec {
                 name: "full".into(),
@@ -78,7 +67,7 @@ impl Default for Profiles {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct ProfileSpec {
     name: String,
     features: Vec<Feature>,
@@ -100,7 +89,6 @@ pub struct Context {
     pub msde_dir: Option<PathBuf>,
     pub version: Option<semver::Version>,
     pub authorization: Option<Authorization>,
-    // TODO: read this in init, if exists.
     pub config: Option<Config>,
 }
 
@@ -125,12 +113,10 @@ impl Context {
                 config_dir.display()
             )
         })?;
-        let msde_dir = msde_dir(&home).ok();
         let config = {
             let config_file = config_dir.join("config.json");
-            if let Ok(f) = File::open(config_file) {
-                let reader = std::io::BufReader::new(f);
-                match serde_json::from_reader(reader) {
+            if let Ok(f) = fs::read_to_string(config_file) {
+                match serde_json::from_str(&f) {
                     Ok(config) => Some(config),
                     Err(e) => {
                         tracing::debug!(error = %e, "config file seems to be broken.");
@@ -141,6 +127,8 @@ impl Context {
                 None
             }
         };
+        let msde_dir = msde_dir(config.as_ref()).ok();
+
         Ok(Self {
             home,
             config_dir,
@@ -176,15 +164,14 @@ impl Context {
         writer.flush()?;
         Ok(())
     }
-    // TODO: Read if exists, and modify (maybe not even here, we should load Config into memory in init)
-    // if we load it into memory on init, we may just pass the current value down from main to here, so we don't need to read again.
+
     pub fn write_config(&self, project_path: PathBuf) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
         let config_file = self.config_dir.join("config.json");
         let f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .truncate(true) // TODO: Truncating until we properly read and modify this file.
+            .truncate(true)
             .open(config_file)?;
 
         let mut writer = std::io::BufWriter::new(f);
@@ -193,8 +180,7 @@ impl Context {
             &mut writer,
             &Config {
                 merigo_dev_package_dir: Some(project_path),
-                // TODO: don't always write the default
-                profiles: Default::default(),
+                ..self.config.clone().unwrap_or_default()
             },
         )?;
         writer.flush()?;
@@ -241,11 +227,10 @@ impl Context {
         };
         let metadata_file = msde_dir.join("./metadata.json");
         anyhow::ensure!(metadata_file.exists(), "metadata file is missing");
-        let f = std::fs::OpenOptions::new().read(true).open(metadata_file)?;
+        let f = fs::read_to_string(metadata_file)?;
 
-        let reader = std::io::BufReader::new(f);
-        let metadata = serde_json::from_reader::<_, PackageLocalConfig>(reader)
-            .context("metadata file is invalid")?;
+        let metadata =
+            serde_json::from_str::<PackageLocalConfig>(&f).context("metadata file is invalid")?;
 
         let project_version = semver::Version::parse(&metadata.self_version)?;
         if project_version != self_version {

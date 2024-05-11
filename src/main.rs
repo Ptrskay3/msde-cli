@@ -154,10 +154,9 @@ fn login(
 }
 
 fn try_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
-    let file = std::fs::File::open(ctx.config_dir.join("credentials.json"))?;
-    let reader = BufReader::new(file);
+    let f = std::fs::read_to_string(ctx.config_dir.join("credentials.json"))?;
     let credentials: SecretCredentials =
-        serde_json::from_reader(reader).context("invalid credentials file")?;
+        serde_json::from_str(&f).context("invalid credentials file")?;
     Ok(credentials)
 }
 
@@ -235,7 +234,7 @@ static LOGLEVEL: &str = "msde_cli=trace";
 static LOGLEVEL: &str = "msde_cli=debug"; // TODO: this should be info level probably
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -332,12 +331,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::UpdateBeamFiles {
             version, no_verify, ..
         }) => {
+            // TODO: Do not hardcode 3.10.0
             let version = version.unwrap_or_else(|| semver::Version::parse("3.10.0").unwrap());
 
             msde_cli::updater::update_beam_files(version.clone(), no_verify).await?;
             tracing::info!("BEAM files updated to version `{version}`.");
         }
         Some(Commands::VerifyBeamFiles { version, path }) => {
+            // TODO: Do not hardcode these values
             let version = version.unwrap_or_else(|| semver::Version::parse("3.10.0").unwrap());
             let path = path.unwrap_or_else(|| {
                 PathBuf::from(
@@ -443,14 +444,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Pull { target, version }) => {
             let credentials =
                 try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-            if let Some(target) = target {
-                let pb = progress_bar();
-                pull(&docker, target, cmd.no_cache, &credentials, pb).await?;
-            } else {
-                let m = indicatif::MultiProgress::new();
 
-                let mut tasks = vec![];
-                let targets = vec![
+            let targets = target.map(|t| vec![t]).unwrap_or_else(|| {
+                vec![
                     Target::Msde {
                         version: version.clone(),
                     },
@@ -464,22 +460,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         version,
                         kind: Some(Web3Kind::All),
                     },
-                ];
-                for target in targets {
-                    let pb = m.add(progress_bar());
+                ]
+            });
+            if !&cmd.no_cache {
+                target_version_check(&targets)?;
+            }
+            let m = indicatif::MultiProgress::new();
+            let mut tasks = vec![];
+            for (image, tag) in get_images_and_tags(&targets) {
+                let pb = m.add(progress_bar());
 
-                    tasks.push(pull(&docker, target, cmd.no_cache, &credentials, pb));
-                }
-                let outcome = futures::future::try_join_all(tasks).await.map_err(|e| {
-                    m.clear().unwrap();
-                    e
-                })?;
+                tasks.push(pull(&docker, (image, tag), &credentials, pb));
+            }
+            let outcome = futures::future::try_join_all(tasks).await.map_err(|e| {
                 m.clear().unwrap();
-                if outcome.iter().all(|x| *x) {
-                    tracing::info!("All targets pulled!")
-                } else {
-                    tracing::error!("Error pulling some of the images. Check errors above.");
-                }
+                e
+            })?;
+            m.clear().unwrap();
+            if outcome.iter().all(|x| *x) {
+                tracing::info!("All targets pulled!")
+            } else {
+                tracing::error!("Error pulling some of the images. Check errors above.");
+                std::process::exit(-1);
             }
         }
         Some(Commands::Login {
@@ -530,7 +532,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let docker_images = docker.images().list(&opts).await?;
             let mut local_image_stats: HashMap<String, Vec<String>> = HashMap::new();
 
-            for docker_image in docker_images.iter() {
+            for docker_image in &docker_images {
                 if docker_image
                     .repo_tags
                     .iter()
@@ -1007,91 +1009,71 @@ fn handle_yes_no_prompt() -> bool {
     }
 }
 
-#[tracing::instrument(skip(docker, no_cache, credentials, pb))]
+#[tracing::instrument(skip(docker, credentials, pb))]
 async fn pull(
     docker: &Docker,
-    target: Target,
-    no_cache: bool,
+    (image, tag): (String, String),
     credentials: &SecretCredentials,
     pb: ProgressBar,
 ) -> anyhow::Result<bool> {
-    tracing::trace!(%target, "attempting to pull an image.. ");
     let mut errored = false;
+    let opts = docker_api::opts::PullOpts::builder()
+        .image(&image)
+        .tag(&tag)
+        .auth(
+            docker_api::opts::RegistryAuth::builder()
+                .username(USER)
+                .password(credentials.pull_key.expose_secret())
+                .build(),
+        )
+        .build();
 
-    let version = target.get_version();
+    let images = docker.images();
+    let mut stream = images.pull(&opts);
 
-    if !no_cache {
-        if let Some(version) = version {
-            let file = File::open(".msde/index.json")?;
-            let reader = BufReader::new(file);
-            let index: Index = serde_json::from_reader(reader)?;
-
-            let entry = index
-                .content
-                .iter()
-                .find(|metadata| metadata.for_target(&target))
-                .unwrap();
-            if !entry.contains_version(version) {
-                tracing::warn!(%target, %version, available_versions = ?entry.parsed_versions.iter(), "Specified unknown version for target");
-            }
-        }
-    }
-
-    let images_and_tags = target.images_and_tags();
-    // TODO: Move this loop probably outside of the pull function. It messes up the progress bars if there're more than one image.
-    for (image, tag) in images_and_tags {
-        let opts = docker_api::opts::PullOpts::builder()
-            .image(&image)
-            .tag(&tag)
-            .auth(
-                docker_api::opts::RegistryAuth::builder()
-                    .username(USER)
-                    .password(credentials.pull_key.expose_secret())
-                    .build(),
-            )
-            .build();
-
-        let images = docker.images();
-        let mut stream = images.pull(&opts);
-
-        pb.set_message(format!("Pulling image {}:{}", &image, &tag));
-        while let Some(pull_result) = stream.next().await {
-            match pull_result {
-                Ok(output) => match output {
-                    docker_api::models::ImageBuildChunk::Error {
-                        error,
-                        error_detail,
-                    } => {
-                        pb.suspend(|| {
-                            tracing::error!(err = ?error, detail = ?error_detail, "Error occurred");
-                        });
-                        errored = true;
-                        pb.finish_with_message(
-                            "Error pulling image. Errors should be logged above.",
-                        );
-                        break;
-                    }
-
-                    docker_api::models::ImageBuildChunk::PullStatus { .. } => {
-                        pb.inc(1);
-                    }
-                    _ => {}
-                },
-                Err(e) => {
-                    pb.suspend(|| tracing::error!(err = ?e, "Error occurred"));
+    pb.set_message(format!("Pulling image {}:{}", &image, &tag));
+    while let Some(pull_result) = stream.next().await {
+        match pull_result {
+            Ok(output) => match output {
+                docker_api::models::ImageBuildChunk::Error {
+                    error,
+                    error_detail,
+                } => {
+                    pb.suspend(|| {
+                        tracing::error!(err = ?error, detail = ?error_detail, "Error occurred");
+                    });
                     errored = true;
                     pb.finish_with_message("Error pulling image. Errors should be logged above.");
                     break;
                 }
+
+                docker_api::models::ImageBuildChunk::PullStatus { .. } => {
+                    pb.inc(1);
+                }
+                _ => {}
+            },
+            Err(e) => {
+                pb.suspend(|| tracing::error!(err = ?e, "Error occurred"));
+                errored = true;
+                pb.finish_with_message("Error pulling image. Errors should be logged above.");
+                break;
             }
         }
     }
+
     if !errored {
         pb.finish_with_message("Done.");
         return Ok(true);
     }
 
     Ok(false)
+}
+
+fn get_images_and_tags(targets: &[Target]) -> Vec<(String, String)> {
+    targets.iter().fold(vec![], |mut acc, target| {
+        acc.extend(target.images_and_tags());
+        acc
+    })
 }
 
 fn progress_bar() -> ProgressBar {
@@ -1106,4 +1088,25 @@ fn progress_bar() -> ProgressBar {
             ]),
     );
     pb
+}
+
+fn target_version_check(targets: &[Target]) -> anyhow::Result<()> {
+    // TODO: Paths
+    let file = File::open(".msde/index.json")?;
+    let reader = BufReader::new(file);
+    let index: Index = serde_json::from_reader(reader)?;
+    for target in targets {
+        let version = target.get_version();
+        if let Some(version) = version {
+            let entry = index
+                .content
+                .iter()
+                .find(|metadata| metadata.for_target(&target))
+                .unwrap();
+            if !entry.contains_version(version) {
+                tracing::warn!(%target, %version, available_versions = ?entry.parsed_versions.iter(), "Specified unknown version for target");
+            }
+        }
+    }
+    Ok(())
 }

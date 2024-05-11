@@ -11,10 +11,6 @@ pub async fn ensure_docker(docker: &docker_api::Docker) -> anyhow::Result<()> {
     })
 }
 
-pub fn ensure_project() -> anyhow::Result<()> {
-    todo!()
-}
-
 pub fn ensure_valid_project_path(path: impl AsRef<Path>, force: bool) -> anyhow::Result<()> {
     let path = path.as_ref();
     if path.exists() {

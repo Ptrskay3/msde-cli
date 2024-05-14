@@ -1,10 +1,12 @@
-use std::{path::Path, process::Stdio};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 
 use crate::env::Feature;
 use indicatif::{ProgressBar, ProgressStyle};
-use tokio::io::AsyncReadExt;
 
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 pub struct Compose;
 
 #[allow(dead_code)]
@@ -79,13 +81,19 @@ impl Compose {
     }
 }
 
-pub struct Pipeline {}
+pub struct Pipeline;
 
 impl Pipeline {
-    pub async fn from_features<P: AsRef<Path>>(features: &[Feature], msde_dir: P) -> Self {
-        let spinner_style = ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
+    // TODO: Generate volumes (probably pass them via stdin and --, and don't write out file to disk)
+    // also TODO: Don't repeat everything..
+    pub async fn from_features<P: AsRef<Path>>(features: &[Feature], msde_dir: P) {
+        let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
             .unwrap()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
+            .tick_strings(&[
+                "⠁", "⠂", "⠄", "⡀", "⡈", "⡐", "⡠", "⣀", "⣁", "⣂", "⣄", "⣌", "⣔", "⣤", "⣥", "⣦",
+                "⣮", "⣶", "⣷", "⣿", "⡿", "⠿", "⢟", "⠟", "⡛", "⠛", "⠫", "⢋", "⠋", "⠍", "⡉", "⠉",
+                "⠑", "⠡", "⢁",
+            ]);
         let pb = ProgressBar::new(1);
         pb.set_style(spinner_style);
         pb.enable_steady_tick(std::time::Duration::from_millis(80));
@@ -103,8 +111,15 @@ impl Pipeline {
         )
         .unwrap();
         tokio::select! {
-            _ = child.wait() => {
-                pb.finish_with_message("✅ Base services started.")
+            exc = child.wait() => {
+                 // TODO: Check exit status, if error, do the same as timeout (write to a log file)
+                    match exc {
+                        Ok(status) if status.success() => {
+                            pb.finish_with_message("✅ Base services started.")
+                        },
+                        Ok(_) => todo!(),
+                        Err(_) => todo!(),
+                    }
             },
             _ = tokio::time::sleep(std::time::Duration::from_secs(100)) => {
                 println!("timed out, killing process");
@@ -112,11 +127,14 @@ impl Pipeline {
             },
 
         }
-        'l: for feature in features {
-            let spinner_style =
-                ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
-                    .unwrap()
-                    .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
+        for feature in features {
+            let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
+                .unwrap()
+                .tick_strings(&[
+                    "⠁", "⠂", "⠄", "⡀", "⡈", "⡐", "⡠", "⣀", "⣁", "⣂", "⣄", "⣌", "⣔", "⣤", "⣥", "⣦",
+                    "⣮", "⣶", "⣷", "⣿", "⡿", "⠿", "⢟", "⠟", "⡛", "⠛", "⠫", "⢋", "⠋", "⠍", "⡉", "⠉",
+                    "⠑", "⠡", "⢁",
+                ]);
             let pb = ProgressBar::new(1);
             pb.set_style(spinner_style);
             pb.enable_steady_tick(std::time::Duration::from_millis(80));
@@ -134,22 +152,64 @@ impl Pipeline {
             )
             .unwrap();
             tokio::select! {
-                _ = child.wait() => {
-                    pb.finish_with_message(format!("✅ {feature} started."))
+                exc = child.wait() => {
+                    // TODO: Check exit status, if error, do the same as timeout
+                    match exc {
+                        Ok(status) if status.success() => {
+                            pb.finish_with_message(format!("✅ {feature} started."))
+                        },
+                        Ok(status) => {
+                            pb.finish_with_message(format!("❌ Failed to start {feature}, stopping process.. (exit status {:?})", status.code()));
+                            let stdout = child.stdout.take().unwrap();
+                            let stderr = child.stderr.take().unwrap();
+                            let log_path = write_failed_start_log(&msde_dir, stdout, stderr).await.unwrap();
+                            println!("You may find the output of the failing command at:");
+                            println!("  {}  ", log_path.display());
+                            break;
+                        },
+                        Err(_) => todo!(),
+                    }
                 },
                 _ = tokio::time::sleep(std::time::Duration::from_secs(100)) => {
-                    pb.finish_with_message("❌ {feature} timed out, killing process.. process stdout was");
-                    // TODO: Do not print these to stdout, create a log file at the project dir.
+                    pb.finish_with_message(format!("❌ {feature} timed out, stopping process.."));
+                    // FIXME: kill or start_kill? kill may block forever.. This way it becomes zombie proc.
+                    child.start_kill().unwrap();
+                    let stdout = child.stdout.take().unwrap();
+                    let stderr = child.stderr.take().unwrap();
+                    let log_path = write_failed_start_log(&msde_dir, stdout, stderr).await.unwrap();
+                    println!("You may find the output of the failing command at:");
+                    println!("  {}  ", log_path.display());
+                    // TODO: this may block forever.. try to avoid it.
                     child.kill().await.unwrap();
-                    let mut op = child.stdout.take().unwrap();
-                    let mut buf = String::new();
-                    op.read_to_string(&mut buf).await.unwrap();
-                    println!("{buf}");
-                    break 'l;
+                    break;
                 },
 
             }
         }
-        Self {}
     }
+}
+
+// TODO: Add timestamp
+#[allow(unused)]
+async fn write_failed_start_log<P: AsRef<Path>>(
+    msde_dir: P,
+    mut stdout: ChildStdout,
+    mut stderr: ChildStderr,
+) -> anyhow::Result<PathBuf> {
+    let log_dir = msde_dir.as_ref().join("log");
+    std::fs::create_dir_all(&log_dir)?;
+    let log_file = log_dir.join("output.log");
+    let f = tokio::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&log_file)
+        .await?;
+    let mut writer = tokio::io::BufWriter::new(f);
+    tokio::io::copy(&mut "Failing process stdout:\n".as_bytes(), &mut writer).await?;
+    tokio::io::copy(&mut stdout, &mut writer).await?;
+    tokio::io::copy(&mut "\nFailing process stderr:\n".as_bytes(), &mut writer).await?;
+    tokio::io::copy(&mut stderr, &mut writer).await?;
+
+    Ok(log_file)
 }

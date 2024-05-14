@@ -629,14 +629,6 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("project must be set")
             };
             Pipeline::from_features(&features, msde_dir).await;
-            // let mut child_process = msde_cli::compose::Compose::up_custom(
-            //     &[],
-            //     None,
-            //     Stdio::inherit(),
-            //     Stdio::inherit(),
-            //     msde_dir,
-            // )?;
-            // child_process.wait().await?;
         }
         Some(Commands::Init { path, force }) => {
             // TODO: integrate login, integrate BEAM file stuff.

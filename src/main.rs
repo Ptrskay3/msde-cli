@@ -269,7 +269,7 @@ async fn main() -> anyhow::Result<()> {
     if !matches!(
         &cmd.command,
         // TODO: don't run this on some other commands. Probably refactor this whole block..
-        Some(Commands::Init { .. } | Commands::UpgradeProject { .. })
+        Some(Commands::Init { .. } | Commands::UpgradeProject { .. } | Commands::GenerateCompletions { .. })
     ) {
         match (ctx.msde_dir.as_ref(), std::env::var("MERIGO_NOWARN_INIT")) {
             (Some(msde_dir), _) => {

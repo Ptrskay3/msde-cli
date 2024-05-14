@@ -6,7 +6,10 @@ use std::{
 use crate::env::Feature;
 use indicatif::{ProgressBar, ProgressStyle};
 
-use tokio::process::{Child, ChildStderr, ChildStdout, Command};
+use tokio::{
+    io::AsyncWriteExt,
+    process::{Child, Command},
+};
 pub struct Compose;
 
 #[allow(dead_code)]
@@ -49,7 +52,6 @@ impl Compose {
         stdout: S,
         stderr: S,
         msde_dir: P,
-        // TODO: Maybe we need the control over spawning
     ) -> anyhow::Result<Child>
     where
         S: Into<Stdio>,
@@ -71,13 +73,6 @@ impl Compose {
             .env("VSN", "3.10.0")
             .spawn()
             .map_err(Into::into)
-
-        // let status = child.wait()?;
-        // if !status.success() {
-        //     eprintln!("docker compose failed with exit code: {}", status);
-        // }
-
-        // Ok(())
     }
 }
 
@@ -160,27 +155,29 @@ impl Pipeline {
                         },
                         Ok(status) => {
                             pb.finish_with_message(format!("❌ Failed to start {feature}, stopping process.. (exit status {:?})", status.code()));
-                            let stdout = child.stdout.take().unwrap();
-                            let stderr = child.stderr.take().unwrap();
-                            let log_path = write_failed_start_log(&msde_dir, stdout, stderr).await.unwrap();
-                            println!("You may find the output of the failing command at:");
-                            println!("  {}  ", log_path.display());
+                            // TODO: implement this
+                            // let log_path = write_failed_start_log(&msde_dir, stdout, stderr).await.unwrap();
+                            // println!("You may find the output of the failing command at:");
+                            // println!("  {}  ", log_path.display());
                             break;
                         },
                         Err(_) => todo!(),
                     }
                 },
-                _ = tokio::time::sleep(std::time::Duration::from_secs(100)) => {
+                // TODO: --timeout flag to control the duration
+                _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {
+                    // These may be useful
+                    // https://docs.rs/os_pipe/latest/os_pipe/
+                    // https://docs.rs/duct/latest/duct/
+                    // https://docs.rs/wait-timeout/latest/wait_timeout/
+                    // Read https://stackoverflow.com/questions/49062707/capture-both-stdout-stderr-via-pipe
                     pb.finish_with_message(format!("❌ {feature} timed out, stopping process.."));
-                    // FIXME: kill or start_kill? kill may block forever.. This way it becomes zombie proc.
                     child.start_kill().unwrap();
-                    let stdout = child.stdout.take().unwrap();
-                    let stderr = child.stderr.take().unwrap();
-                    let log_path = write_failed_start_log(&msde_dir, stdout, stderr).await.unwrap();
+                    let result  = child.wait_with_output().await.unwrap();
+                    // FIXME: This doesn't write the thing to the file.. other than that, `result` looks fine.
+                    let log_path = write_failed_start_log(&msde_dir, result.stdout, result.stderr).await.unwrap();
                     println!("You may find the output of the failing command at:");
                     println!("  {}  ", log_path.display());
-                    // TODO: this may block forever.. try to avoid it.
-                    child.kill().await.unwrap();
                     break;
                 },
 
@@ -193,8 +190,8 @@ impl Pipeline {
 #[allow(unused)]
 async fn write_failed_start_log<P: AsRef<Path>>(
     msde_dir: P,
-    mut stdout: ChildStdout,
-    mut stderr: ChildStderr,
+    mut stdout: Vec<u8>,
+    mut stderr: Vec<u8>,
 ) -> anyhow::Result<PathBuf> {
     let log_dir = msde_dir.as_ref().join("log");
     std::fs::create_dir_all(&log_dir)?;
@@ -207,9 +204,9 @@ async fn write_failed_start_log<P: AsRef<Path>>(
         .await?;
     let mut writer = tokio::io::BufWriter::new(f);
     tokio::io::copy(&mut "Failing process stdout:\n".as_bytes(), &mut writer).await?;
-    tokio::io::copy(&mut stdout, &mut writer).await?;
+    writer.write_all(&stdout).await?;
     tokio::io::copy(&mut "\nFailing process stderr:\n".as_bytes(), &mut writer).await?;
-    tokio::io::copy(&mut stderr, &mut writer).await?;
+    writer.write_all(&stderr).await?;
 
     Ok(log_file)
 }

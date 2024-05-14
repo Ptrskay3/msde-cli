@@ -13,6 +13,11 @@ use std::{
     io::{BufReader, Seek, Write},
     path::{Path, PathBuf},
 };
+use strum::Display;
+
+use crate::compose::{
+    DOCKER_COMPOSE_BOT, DOCKER_COMPOSE_METRICS, DOCKER_COMPOSE_OTEL, DOCKER_COMPOSE_WEB3,
+};
 
 pub fn home() -> anyhow::Result<PathBuf> {
     match home::home_dir() {
@@ -73,13 +78,33 @@ pub struct ProfileSpec {
     features: Vec<Feature>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, ValueEnum)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, ValueEnum, Display)]
 #[serde(rename_all = "lowercase")]
 pub enum Feature {
     OTEL,
     Metrics,
     Web3,
     Bot,
+}
+
+impl Feature {
+    pub fn wait_on(&self) -> &'static str {
+        match self {
+            Feature::OTEL => "kibana",
+            Feature::Metrics => "grafana",
+            Feature::Web3 => "web3-vm-dev",
+            Feature::Bot => "msde-vm-dev",
+        }
+    }
+
+    pub fn to_target(&self) -> &'static str {
+        match self {
+            Feature::OTEL => DOCKER_COMPOSE_OTEL,
+            Feature::Metrics => DOCKER_COMPOSE_METRICS,
+            Feature::Web3 => DOCKER_COMPOSE_WEB3,
+            Feature::Bot => DOCKER_COMPOSE_BOT,
+        }
+    }
 }
 
 #[derive(Debug)]

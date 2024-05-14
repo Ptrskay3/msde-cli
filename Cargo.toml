@@ -37,6 +37,7 @@ tar = "0.4"
 dialoguer = "0.11.0"
 console = "0.15.8"
 indicatif = { version = "0.17.8", features = ["tokio"] }
+strum = { version = "0.26", features = ["derive"] }
 
 [build-dependencies]
 flate2 = "1.0"

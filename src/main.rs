@@ -20,6 +20,7 @@ use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
+use msde_cli::compose::Pipeline;
 use msde_cli::env::PackageLocalConfig;
 use msde_cli::init::ensure_valid_project_path;
 use secrecy::ExposeSecret;
@@ -78,7 +79,8 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::Docs
+                Commands::Up { .. }
+                    | Commands::Docs
                     | Commands::Status
                     | Commands::AddProfile { .. }
                     | Commands::SetProject { .. }
@@ -622,8 +624,19 @@ async fn main() -> anyhow::Result<()> {
                 msde_cli::env::Context::clean(&ctx);
             }
         }
-        Some(Commands::Up {}) => {
-            msde_cli::compose::Compose::up_builtin(None)?;
+        Some(Commands::Up { features }) => {
+            let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
+                anyhow::bail!("project must be set")
+            };
+            Pipeline::from_features(&features, msde_dir).await;
+            // let mut child_process = msde_cli::compose::Compose::up_custom(
+            //     &[],
+            //     None,
+            //     Stdio::inherit(),
+            //     Stdio::inherit(),
+            //     msde_dir,
+            // )?;
+            // child_process.wait().await?;
         }
         Some(Commands::Init { path, force }) => {
             // TODO: integrate login, integrate BEAM file stuff.
@@ -793,7 +806,10 @@ enum Commands {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
     },
-    Up {},
+    Up {
+        #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+        features: Vec<msde_cli::env::Feature>,
+    },
     /// Wipe out all config files and folders.
     Clean {
         /// Continue without asking for further confirmation.
@@ -1101,7 +1117,7 @@ fn target_version_check(targets: &[Target]) -> anyhow::Result<()> {
             let entry = index
                 .content
                 .iter()
-                .find(|metadata| metadata.for_target(&target))
+                .find(|metadata| metadata.for_target(target))
                 .unwrap();
             if !entry.contains_version(version) {
                 tracing::warn!(%target, %version, available_versions = ?entry.parsed_versions.iter(), "Specified unknown version for target");

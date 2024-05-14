@@ -1,6 +1,6 @@
 [package]
 name = "msde-cli"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 description = "CLI tool for running the Merigo Dev package."
 repository = "https://github.com/ptrskay3/msde-cli"
@@ -19,7 +19,7 @@ futures = "0.3.28"
 anyhow = "1.0.75"
 secrecy = { version = "0.8.0", features = ["serde"] }
 semver = "1.0.19"
-reqwest = { version = "0.12.4", features = ["json", "rustls-tls"], default-features = false } # Maybe `native-tls-vendored`?
+reqwest = { version = "0.12.4", features = ["json", "rustls-tls"], default-features = false }
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
 time = { version = "0.3.29", features = ["serde"] }
@@ -30,7 +30,6 @@ zip-extensions = "0.6"
 fs_extra = "1.3.0"
 home = "0.5.9"
 clap_complete = "4.5.2"
-# TODO: Use it to open stuff when it's ready.
 webbrowser = "1.0.0"
 flate2 = "1.0"
 tar = "0.4"

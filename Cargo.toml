@@ -37,6 +37,9 @@ dialoguer = "0.11.0"
 console = "0.15.8"
 indicatif = { version = "0.17.8", features = ["tokio"] }
 strum = { version = "0.26", features = ["derive"] }
+serde_yaml = "0.9.34"
+# To normalize Windows paths for docker compose commands..
+wslpath-rs = "0.1.0"
 
 [build-dependencies]
 flate2 = "1.0"

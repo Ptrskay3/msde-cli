@@ -78,13 +78,24 @@ pub struct ProfileSpec {
     features: Vec<Feature>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, ValueEnum, Display)]
+#[derive(
+    serde::Deserialize,
+    serde::Serialize,
+    Debug,
+    Clone,
+    ValueEnum,
+    Display,
+    PartialEq,
+    PartialOrd,
+    Eq,
+    Ord,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Feature {
-    OTEL,
-    Metrics,
-    Web3,
-    Bot,
+    Metrics = 1,
+    OTEL = 2,
+    Web3 = 3,
+    Bot = 4,
 }
 
 impl Feature {

@@ -269,7 +269,11 @@ async fn main() -> anyhow::Result<()> {
     if !matches!(
         &cmd.command,
         // TODO: don't run this on some other commands. Probably refactor this whole block..
-        Some(Commands::Init { .. } | Commands::UpgradeProject { .. } | Commands::GenerateCompletions { .. })
+        Some(
+            Commands::Init { .. }
+                | Commands::UpgradeProject { .. }
+                | Commands::GenerateCompletions { .. }
+        )
     ) {
         match (ctx.msde_dir.as_ref(), std::env::var("MERIGO_NOWARN_INIT")) {
             (Some(msde_dir), _) => {
@@ -624,13 +628,14 @@ async fn main() -> anyhow::Result<()> {
                 msde_cli::env::Context::clean(&ctx);
             }
         }
-        Some(Commands::Up { features }) => {
+        Some(Commands::Up { mut features, timeout }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            Pipeline::from_features(&features, msde_dir).await;
+            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout).await;
         }
         Some(Commands::Init { path, force }) => {
+            // FIXME: bug: on Windows, if .msde directory doesnt exist and we just accept the default, it doesn't create the config.
             // TODO: integrate login, integrate BEAM file stuff.
             // Prompt whether example games should be included
             // Message to put their existing games inside a folder..
@@ -779,7 +784,7 @@ enum Commands {
     AddProfile {
         #[arg(short, long)]
         name: String,
-        #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+        #[arg(short, long, value_delimiter = ',', num_args = 1..)]
         features: Vec<msde_cli::env::Feature>,
     },
     /// Generate shell auto-completions for this CLI tool.
@@ -799,8 +804,14 @@ enum Commands {
         path: Option<std::path::PathBuf>,
     },
     Up {
-        #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+        #[arg(short, long, value_delimiter = ',', num_args = 1..)]
         features: Vec<msde_cli::env::Feature>,
+
+        // We may use humantime::Duration like so:
+        ///   #[clap(default_value = "100s")]
+        ///   interval: humantime::Duration,
+        #[arg(short, long, default_value_t = 100)]
+        timeout: u64,
     },
     /// Wipe out all config files and folders.
     Clean {

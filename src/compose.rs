@@ -5,11 +5,12 @@ use std::{
 };
 
 use crate::env::Feature;
+use anyhow::Context as _;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, Command},
 };
 pub struct Compose;
@@ -34,7 +35,7 @@ const MERIGO_SAMPLE_DIR: &str = "/usr/local/bin/merigo/samples";
 pub struct ComposeOpts<'a> {
     pub daemon: bool,
     pub target: Option<&'a str>,
-    pub streamed_file_content: Option<&'a str>,
+    pub file_streamed_stdin: bool,
 }
 
 impl<'a> ComposeOpts<'a> {
@@ -68,7 +69,7 @@ impl Compose {
             .flat_map(|file| ["-f", file])
             .collect::<Vec<_>>();
         let opts = opts.unwrap_or_default();
-        if opts.streamed_file_content.is_some() {
+        if opts.file_streamed_stdin {
             files.extend(&["-f", "-"])
         }
 
@@ -78,7 +79,7 @@ impl Compose {
             .current_dir(msde_dir)
             .stdout(stdout)
             .stderr(stderr)
-            .stdin(Stdio::piped())
+            .stdin(Stdio::piped()) // TODO: make this an argument
             .arg("compose")
             .args(files)
             .arg("up")
@@ -87,23 +88,38 @@ impl Compose {
             .spawn()
             .map_err(Into::into)
     }
+
+    pub fn down_all<P>(msde_dir: P) -> anyhow::Result<Child>
+    where
+        P: AsRef<Path>,
+    {
+        let files = &[
+            DOCKER_COMPOSE_BOT,
+            DOCKER_COMPOSE_MAIN,
+            DOCKER_COMPOSE_METRICS,
+            DOCKER_COMPOSE_OTEL,
+            DOCKER_COMPOSE_WEB3,
+        ]
+        .iter()
+        .flat_map(|file| ["-f", file])
+        .collect::<Vec<_>>();
+
+        Command::new("docker")
+            .current_dir(msde_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .arg("compose")
+            .args(files)
+            .arg("down")
+            .spawn()
+            .map_err(Into::into)
+    }
 }
 
 pub struct Pipeline;
 
-// TODO: Consider this instead of the tokio::select for timeouts: https://stackoverflow.com/questions/43705010/how-to-query-a-child-process-status-regularly
-
 impl Pipeline {
-    // TODO: Don't repeat everything..
-    pub async fn from_features<P: AsRef<Path>>(
-        features: &mut [Feature],
-        msde_dir: P,
-        timeout: u64,
-    ) {
-        // TODO: don't unwrap everywhere
-        features.sort();
-
-        let volumes = generate_volumes(features, &msde_dir).unwrap();
+    pub async fn down_all<P: AsRef<Path>>(msde_dir: P, timeout: u64) -> anyhow::Result<()> {
         let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
             .unwrap()
             .tick_strings(&[
@@ -114,124 +130,179 @@ impl Pipeline {
         let pb = ProgressBar::new(1);
         pb.set_style(spinner_style);
         pb.enable_steady_tick(std::time::Duration::from_millis(80));
+        pb.set_message("Stopping all services..");
+        let mut child = Compose::down_all(&msde_dir)?;
+
+        tokio::select! {
+            exc = child.wait() => {
+                match exc {
+                    Ok(status) if status.success() => {
+                        pb.finish_with_message("✅ All services stopped.")
+                    },
+                    Ok(status) => {
+                        pb.finish_with_message(format!("❌ Failed to stop services, stopping process.. (exit status {:?})", status.code().unwrap_or(1)));
+                        let mut stdout = child.stdout.take().context("Failed to take child stdout")?;
+                        let mut stderr = child.stderr.take().context("Failed to take child stderr")?;
+                        let mut stdout_buf = vec![];
+                        let mut stderr_buf = vec![];
+                        stdout.read_to_end(&mut stdout_buf).await?;
+                        stderr.read_to_end(&mut stderr_buf).await?;
+                        drop(stdout);
+                        drop(stderr);
+
+                        let log_path = write_failed_start_log(&msde_dir, stdout_buf.as_slice(), stderr_buf.as_slice()).await?;
+                        println!("You may find the output of the failing command at:");
+                        println!("  {}  ", log_path.display());
+                        return Err(anyhow::Error::msg("Failed"));
+
+                    },
+                    Err(e) => {
+                        // FIXME: Unclear from the documentation what happens here. Probably things go really wrong here, so we should just exit immediately.
+                        println!("{e}");
+                        return Err(anyhow::Error::msg("Failed"));
+
+                    },
+                }
+            },
+            _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
+                pb.finish_with_message(format!("❌ Stopping services timed out, stopping process.."));
+                child.start_kill()?;
+                let result  = child.wait_with_output().await?;
+                let log_path = write_failed_start_log(&msde_dir, &result.stdout, &result.stderr).await?;
+                println!("You may find the output of the failing command at:");
+                println!("  {}  ", log_path.display());
+                return Err(anyhow::Error::msg("Failed"));
+            },
+        }
+        Ok(())
+    }
+
+    pub async fn from_features<P: AsRef<Path>>(
+        features: &mut [Feature],
+        msde_dir: P,
+        timeout: u64,
+    ) -> anyhow::Result<()> {
+        features.sort();
+
+        let volumes =
+            generate_volumes(features, &msde_dir).context("Failed to generate volume bindings")?;
+        let pb = progress_spinner();
         pb.set_message("Booting base services..");
-        let mut child = Compose::up_custom(
+        let child = Compose::up_custom(
             &[DOCKER_COMPOSE_BASE],
             Some(ComposeOpts {
                 daemon: true,
                 target: None,
-                streamed_file_content: None,
+                file_streamed_stdin: false,
             }),
             Stdio::null(),
             Stdio::null(),
             &msde_dir,
-        )
-        .unwrap();
-        tokio::select! {
-            exc = child.wait() => {
-                 // TODO: Check exit status, if error, do the same as timeout (write to a log file)
-                    match exc {
-                        Ok(status) if status.success() => {
-                            pb.finish_with_message("✅ Base services started.")
-                        },
-                        Ok(_) => todo!(),
-                        Err(_) => todo!(),
-                    }
-            },
-            _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
-                println!("timed out, killing process");
-                child.kill().await.unwrap()
-            },
+        )?;
+        wait_child_with_timeout(child, pb, timeout, &msde_dir, "Base services").await?;
 
-        }
         let last_feature_idx = features.len().saturating_sub(1);
         let bot_enabled = features.iter().any(|f| matches!(f, Feature::Bot));
 
-        // TODO: Sort features, inject base msde, if bot is not specified.
         for (i, feature) in features.iter().enumerate() {
-            let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
-                .unwrap()
-                .tick_strings(&[
-                    "⠁", "⠂", "⠄", "⡀", "⡈", "⡐", "⡠", "⣀", "⣁", "⣂", "⣄", "⣌", "⣔", "⣤", "⣥", "⣦",
-                    "⣮", "⣶", "⣷", "⣿", "⡿", "⠿", "⢟", "⠟", "⡛", "⠛", "⠫", "⢋", "⠋", "⠍", "⡉", "⠉",
-                    "⠑", "⠡", "⢁",
-                ]);
-            let pb = ProgressBar::new(1);
-            pb.set_style(spinner_style);
-            pb.enable_steady_tick(std::time::Duration::from_millis(80));
+            let pb = progress_spinner();
             pb.set_message(format!("Booting {}..", feature));
             let f = feature.to_target();
             let mut child = Compose::up_custom(
                 &[f],
                 Some(ComposeOpts {
                     daemon: true,
+                    // FIXME: bot_enabled should be negated?
                     target: if i == last_feature_idx && bot_enabled {
-                        // TODO: If bot is enabled, it's not necessary?
                         Some("msde-vm-dev")
                     } else {
                         None
                     },
-                    streamed_file_content: if i == last_feature_idx && bot_enabled {
-                        Some(&volumes)
-                    } else {
-                        None
-                    },
+                    // FIXME: Maybe this also should be behind `if i == last_feature_idx && bot_enabled`
+                    file_streamed_stdin: true,
                 }),
                 Stdio::piped(),
                 Stdio::piped(),
                 &msde_dir,
-            )
-            .unwrap();
-            // TODO: ensure that no deadlock is possible because of this
+            )?;
+            // Attach volumes to the bot command, if it's enabled.
             if i == last_feature_idx && bot_enabled {
-                let mut stdin = child.stdin.take().unwrap();
-                stdin.write_all(volumes.as_bytes()).await.unwrap();
-                stdin.flush().await.unwrap();
+                let mut stdin = child.stdin.take().context("Failed to take child stdin")?;
+                stdin.write_all(volumes.as_bytes()).await?;
+                stdin.flush().await?;
                 drop(stdin);
             }
-            tokio::select! {
-                exc = child.wait() => {
-                    // TODO: Check exit status, if error, do the same as timeout
-                    match exc {
-                        Ok(status) if status.success() => {
-                            pb.finish_with_message(format!("✅ {feature} started."))
-                        },
-                        Ok(status) => {
-                            pb.finish_with_message(format!("❌ Failed to start {feature}, stopping process.. (exit status {:?})", status.code()));
-                            // TODO: implement this..
-                            // let stdout = child.stdout.take().unwrap();
-                            // let stderr = child.stderr.take().unwrap();
-                            // let log_path = write_failed_start_log(&msde_dir, stdout, stderr).await.unwrap();
-                            // println!("You may find the output of the failing command at:");
-                            // println!("  {}  ", log_path.display());
-                            break;
-                        },
-                        Err(_) => todo!(),
-                    }
-                },
-                // TODO: --timeout flag to control the duration
-                _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
-                    // These may be useful
-                    // https://docs.rs/os_pipe/latest/os_pipe/
-                    // https://docs.rs/duct/latest/duct/
-                    // https://docs.rs/wait-timeout/latest/wait_timeout/
-                    // Read https://stackoverflow.com/questions/49062707/capture-both-stdout-stderr-via-pipe
-                    pb.finish_with_message(format!("❌ {feature} timed out, stopping process.."));
-                    child.start_kill().unwrap();
-                    let result  = child.wait_with_output().await.unwrap();
-                    let log_path = write_failed_start_log(&msde_dir, &result.stdout, &result.stderr).await.unwrap();
-                    println!("You may find the output of the failing command at:");
-                    println!("  {}  ", log_path.display());
-                    break;
-                },
-
-            }
+            wait_child_with_timeout(child, pb, timeout, &msde_dir, &feature.to_string()).await?;
         }
 
         if !bot_enabled {
-            println!("should start MSDE too..");
+            let pb = progress_spinner();
+            pb.set_message("Booting MSDE..");
+            let mut child = Compose::up_custom(
+                &[DOCKER_COMPOSE_MAIN],
+                Some(ComposeOpts {
+                    daemon: true,
+                    target: Some("msde-vm-dev"),
+                    file_streamed_stdin: true,
+                }),
+                Stdio::piped(),
+                Stdio::piped(),
+                &msde_dir,
+            )?;
+            // Attach volumes to the MSDE up command, since it's the last one running.
+            let mut stdin = child.stdin.take().context("Failed to take child stdin")?;
+            stdin.write_all(volumes.as_bytes()).await?;
+            stdin.flush().await?;
+            drop(stdin);
+            wait_child_with_timeout(child, pb, timeout, msde_dir, "MSDE").await?;
         }
+        Ok(())
     }
+}
+
+async fn wait_child_with_timeout<P: AsRef<Path>>(
+    mut child: Child,
+    pb: ProgressBar,
+    timeout: u64,
+    msde_dir: P,
+    target: &str,
+) -> anyhow::Result<()> {
+    tokio::select! {
+        exc = child.wait() => {
+            match exc {
+                Ok(status) if status.success() => {
+                    pb.finish_with_message(format!("✅ {target} started."))
+                },
+                Ok(status) => {
+                    pb.finish_with_message(format!("❌ Failed to start {target}, stopping process.. (exit status {:?})", status.code().unwrap_or(1)));
+                    let mut stdout = child.stdout.take().context("Failed to take child stdout")?;
+                    let mut stderr = child.stderr.take().context("Failed to take child stderr")?;
+                    let mut stdout_buf = vec![];
+                    let mut stderr_buf = vec![];
+                    stdout.read_to_end(&mut stdout_buf).await?;
+                    stderr.read_to_end(&mut stderr_buf).await?;
+                    drop(stdout);
+                    drop(stderr);
+
+                    let log_path = write_failed_start_log(&msde_dir, stdout_buf.as_slice(), stderr_buf.as_slice()).await?;
+                    println!("You may find the output of the failing command at:");
+                    println!("  {}  ", log_path.display());
+                    return Err(anyhow::Error::msg("Failed"));
+                },
+                Err(_) => todo!(),
+            }
+        },
+        _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
+            pb.finish_with_message(format!("❌ {target} timed out, stopping process.."));
+            child.start_kill()?;
+            let result  = child.wait_with_output().await?;
+            let log_path = write_failed_start_log(&msde_dir, &result.stdout, &result.stderr).await?;
+            println!("You may find the output of the failing command at:");
+            println!("  {}  ", log_path.display());
+            return Err(anyhow::Error::msg("Failed"));
+        },
+    }
+    Ok(())
 }
 
 // TODO: Add timestamp
@@ -260,6 +331,21 @@ async fn write_failed_start_log<P: AsRef<Path>>(
     Ok(log_file)
 }
 
+fn progress_spinner() -> ProgressBar {
+    let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
+        .unwrap()
+        .tick_strings(&[
+            "⠁", "⠂", "⠄", "⡀", "⡈", "⡐", "⡠", "⣀", "⣁", "⣂", "⣄", "⣌", "⣔", "⣤", "⣥", "⣦", "⣮",
+            "⣶", "⣷", "⣿", "⡿", "⠿", "⢟", "⠟", "⡛", "⠛", "⠫", "⢋", "⠋", "⠍", "⡉", "⠉", "⠑", "⠡",
+            "⢁",
+        ]);
+    let pb = ProgressBar::new(1);
+    pb.set_style(spinner_style);
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb
+}
+
+#[cfg(unix)]
 fn generate_volumes(features: &[Feature], msde_dir: impl AsRef<Path>) -> anyhow::Result<String> {
     let games_dir = msde_dir.as_ref().join("games");
     let samples_dir = msde_dir.as_ref().join("samples");
@@ -278,6 +364,12 @@ fn generate_volumes(features: &[Feature], msde_dir: impl AsRef<Path>) -> anyhow:
         mapping.services.insert("bot-vm-dev", service);
     }
     serde_yaml::to_string(&mapping).map_err(Into::into)
+}
+
+// Probably Windows needs special treatment, so let's just mark this as a todo
+#[cfg(not(unix))]
+fn generate_volumes(features: &[Feature], msde_dir: impl AsRef<Path>) -> anyhow::Result<String> {
+    todo!()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

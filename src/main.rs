@@ -79,7 +79,8 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::Up { .. }
+                Commands::Down { .. }
+                    | Commands::Up { .. }
                     | Commands::Docs
                     | Commands::Status
                     | Commands::AddProfile { .. }
@@ -628,11 +629,20 @@ async fn main() -> anyhow::Result<()> {
                 msde_cli::env::Context::clean(&ctx);
             }
         }
-        Some(Commands::Up { mut features, timeout }) => {
+        Some(Commands::Up {
+            mut features,
+            timeout,
+        }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout).await;
+            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout).await?;
+        }
+        Some(Commands::Down { timeout }) => {
+            let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
+                anyhow::bail!("project must be set")
+            };
+            Pipeline::down_all(msde_dir, timeout).await?;
         }
         Some(Commands::Init { path, force }) => {
             // FIXME: bug: on Windows, if .msde directory doesnt exist and we just accept the default, it doesn't create the config.
@@ -826,7 +836,10 @@ enum Commands {
     },
     Stop,
     Start,
-    Down,
+    Down {
+        #[arg(short, long, default_value_t = 100)]
+        timeout: u64,
+    },
     /// Open the logs of the target service.
     Log {
         #[command(subcommand)]

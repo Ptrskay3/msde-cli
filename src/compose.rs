@@ -58,6 +58,7 @@ impl Compose {
         opts: Option<ComposeOpts>,
         stdout: S,
         stderr: S,
+        stdin: S,
         msde_dir: P,
     ) -> anyhow::Result<Child>
     where
@@ -79,7 +80,7 @@ impl Compose {
             .current_dir(msde_dir)
             .stdout(stdout)
             .stderr(stderr)
-            .stdin(Stdio::piped()) // TODO: make this an argument
+            .stdin(stdin)
             .arg("compose")
             .args(files)
             .arg("up")
@@ -181,6 +182,7 @@ impl Pipeline {
         features: &mut [Feature],
         msde_dir: P,
         timeout: u64,
+        docker: &docker_api::Docker,
     ) -> anyhow::Result<()> {
         features.sort();
 
@@ -197,9 +199,10 @@ impl Pipeline {
             }),
             Stdio::null(),
             Stdio::null(),
+            Stdio::piped(),
             &msde_dir,
         )?;
-        wait_child_with_timeout(child, pb, timeout, &msde_dir, "Base services").await?;
+        wait_child_with_timeout(child, &pb, timeout, &msde_dir, "Base services").await?;
 
         let last_feature_idx = features.len().saturating_sub(1);
         let bot_enabled = features.iter().any(|f| matches!(f, Feature::Bot));
@@ -218,9 +221,9 @@ impl Pipeline {
                     } else {
                         None
                     },
-                    // FIXME: Maybe this also should be behind `if i == last_feature_idx && bot_enabled`
-                    file_streamed_stdin: true,
+                    file_streamed_stdin: i == last_feature_idx && bot_enabled,
                 }),
+                Stdio::piped(),
                 Stdio::piped(),
                 Stdio::piped(),
                 &msde_dir,
@@ -232,7 +235,7 @@ impl Pipeline {
                 stdin.flush().await?;
                 drop(stdin);
             }
-            wait_child_with_timeout(child, pb, timeout, &msde_dir, &feature.to_string()).await?;
+            wait_child_with_timeout(child, &pb, timeout, &msde_dir, &feature.to_string()).await?;
         }
 
         if !bot_enabled {
@@ -247,6 +250,7 @@ impl Pipeline {
                 }),
                 Stdio::piped(),
                 Stdio::piped(),
+                Stdio::piped(),
                 &msde_dir,
             )?;
             // Attach volumes to the MSDE up command, since it's the last one running.
@@ -254,15 +258,16 @@ impl Pipeline {
             stdin.write_all(volumes.as_bytes()).await?;
             stdin.flush().await?;
             drop(stdin);
-            wait_child_with_timeout(child, pb, timeout, msde_dir, "MSDE").await?;
+            wait_child_with_timeout(child, &pb, timeout, msde_dir, "MSDE").await?;
         }
+        wait_with_timeout(&docker, timeout).await?;
         Ok(())
     }
 }
 
 async fn wait_child_with_timeout<P: AsRef<Path>>(
     mut child: Child,
-    pb: ProgressBar,
+    pb: &ProgressBar,
     timeout: u64,
     msde_dir: P,
     target: &str,
@@ -289,7 +294,11 @@ async fn wait_child_with_timeout<P: AsRef<Path>>(
                     println!("  {}  ", log_path.display());
                     return Err(anyhow::Error::msg("Failed"));
                 },
-                Err(_) => todo!(),
+                Err(e) => {
+                    // FIXME: Unclear from the documentation what happens here. Probably things go really wrong here, so we should just exit immediately.
+                    println!("{e}");
+                    return Err(anyhow::Error::msg("Failed"));
+                }
             }
         },
         _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
@@ -381,4 +390,65 @@ struct Services<'a> {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct Service {
     volumes: Vec<String>,
+}
+
+pub async fn running_containers(
+    docker: &docker_api::Docker,
+) -> anyhow::Result<HashMap<String, String>> {
+    Ok(docker
+        .containers()
+        .list(&Default::default())
+        .await?
+        .into_iter()
+        .map(|c| {
+            (
+                c.names.unwrap_or_default(),
+                c.id.unwrap_or_else(|| String::from("unknown")),
+            )
+        })
+        .map(|(mut c, id)| (c.pop().unwrap_or_else(|| String::from("unknown")), id))
+        .collect())
+}
+
+pub async fn wait_until_heathy(docker: &docker_api::Docker, target_id: &str) -> anyhow::Result<()> {
+    loop {
+        let health = docker
+            .containers()
+            .get(target_id)
+            .inspect()
+            .await?
+            .state
+            .context("Failed to get container state")?
+            .health
+            .context("Failed to get container health")?
+            .status
+            .context("Failed to get container health status")?;
+
+        if health.as_str() == "healthy" {
+            break;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    Ok(())
+}
+
+pub async fn wait_with_timeout(docker: &docker_api::Docker, timeout: u64) -> anyhow::Result<()> {
+    let containers = running_containers(&docker).await?;
+    let msde_id = containers
+        .get("/msde-vm-dev")
+        .context("MSDE is not running somehow?")?;
+    let pb = progress_spinner();
+    pb.set_message("Waiting for MSDE to be healthy..");
+    tokio::select! {
+        // TODO: Maybe a much lower timeout value here? It should be ready relatively quickly.
+        _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
+            pb.finish_with_message("❌ MSDE health check timed out.");
+        }
+        _ = wait_until_heathy(&docker, msde_id) => {
+            pb.finish_with_message("✅ MSDE is healthy.");
+
+        }
+    }
+    Ok(())
 }

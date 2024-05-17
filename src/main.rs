@@ -78,24 +78,21 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(
-                Commands::Down { .. }
-                    | Commands::Up { .. }
-                    | Commands::Docs
-                    | Commands::Status
-                    | Commands::AddProfile { .. }
-                    | Commands::SetProject { .. }
-                    | Commands::GenerateCompletions { .. }
-                    | Commands::UpgradeProject { .. }
-                    | Commands::Clean { .. }
-                    | Commands::Init { .. }
-                    | Commands::BuildCache { .. }
-                    | Commands::Login { .. }
-                    | Commands::Containers { .. }
-                    | Commands::Exec { .. }
-                    | Commands::UpdateBeamFiles { .. }
-                    | Commands::VerifyBeamFiles { .. }
-            )
+            None | Some(|Commands::Down { .. }| Commands::Up { .. }
+                | Commands::Docs
+                | Commands::Status
+                | Commands::AddProfile { .. }
+                | Commands::SetProject { .. }
+                | Commands::GenerateCompletions { .. }
+                | Commands::UpgradeProject { .. }
+                | Commands::Clean { .. }
+                | Commands::Init { .. }
+                | Commands::BuildCache { .. }
+                | Commands::Login { .. }
+                | Commands::Containers { .. }
+                | Commands::Exec { .. }
+                | Commands::UpdateBeamFiles { .. }
+                | Commands::VerifyBeamFiles { .. })
         )
     }
 }
@@ -636,7 +633,7 @@ async fn main() -> anyhow::Result<()> {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout).await?;
+            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout, &docker).await?;
         }
         Some(Commands::Down { timeout }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {

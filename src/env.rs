@@ -98,16 +98,53 @@ pub enum Feature {
     Bot = 4,
 }
 
-impl Feature {
-    pub fn wait_on(&self) -> &'static str {
+#[derive(
+    serde::Deserialize,
+    serde::Serialize,
+    Debug,
+    Clone,
+    ValueEnum,
+    Display,
+    PartialEq,
+    PartialOrd,
+    Eq,
+    Ord,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtendedFeature {
+    Metrics = 1,
+    OTEL = 2,
+    Web3 = 3,
+    Bot = 4,
+    MSDE = 5,
+    Base = 6,
+}
+
+impl ExtendedFeature {
+    pub fn wait_target(&self) -> &str {
         match self {
-            Feature::OTEL => "kibana",
-            Feature::Metrics => "grafana",
-            Feature::Web3 => "web3-vm-dev",
-            Feature::Bot => "msde-vm-dev",
+            ExtendedFeature::Base => "/consul-vm-dev",
+            ExtendedFeature::Metrics => "/grafana-vm-dev",
+            ExtendedFeature::OTEL => "/kibana",
+            ExtendedFeature::Web3 => "/web3-vm-dev",
+            ExtendedFeature::Bot => "/msde-vm-dev", // Not a typo!
+            ExtendedFeature::MSDE => "/msde-vm-dev",
         }
     }
+}
 
+impl From<Feature> for ExtendedFeature {
+    fn from(value: Feature) -> Self {
+        match value {
+            Feature::Metrics => Self::Metrics,
+            Feature::OTEL => Self::OTEL,
+            Feature::Web3 => Self::Web3,
+            Feature::Bot => Self::Bot,
+        }
+    }
+}
+
+impl Feature {
     pub fn to_target(&self) -> &'static str {
         match self {
             Feature::OTEL => DOCKER_COMPOSE_OTEL,

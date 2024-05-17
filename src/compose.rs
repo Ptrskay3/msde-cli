@@ -410,6 +410,7 @@ pub async fn running_containers(
         .collect())
 }
 
+// TODO: This function doesn't exit, if the container crashed. We probably should exit if "exited" or "unhealthy"..
 pub async fn wait_until_heathy(docker: &docker_api::Docker, target_id: &str) -> anyhow::Result<()> {
     loop {
         let health = docker

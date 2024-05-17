@@ -78,21 +78,25 @@ impl Command {
     fn should_ignore_credentials(&self) -> bool {
         matches!(
             self.command,
-            None | Some(|Commands::Down { .. }| Commands::Up { .. }
-                | Commands::Docs
-                | Commands::Status
-                | Commands::AddProfile { .. }
-                | Commands::SetProject { .. }
-                | Commands::GenerateCompletions { .. }
-                | Commands::UpgradeProject { .. }
-                | Commands::Clean { .. }
-                | Commands::Init { .. }
-                | Commands::BuildCache { .. }
-                | Commands::Login { .. }
-                | Commands::Containers { .. }
-                | Commands::Exec { .. }
-                | Commands::UpdateBeamFiles { .. }
-                | Commands::VerifyBeamFiles { .. })
+            None | Some(
+                Commands::Rpc { .. }
+                    | Commands::Down { .. }
+                    | Commands::Up { .. }
+                    | Commands::Docs
+                    | Commands::Status
+                    | Commands::AddProfile { .. }
+                    | Commands::SetProject { .. }
+                    | Commands::GenerateCompletions { .. }
+                    | Commands::UpgradeProject { .. }
+                    | Commands::Clean { .. }
+                    | Commands::Init { .. }
+                    | Commands::BuildCache { .. }
+                    | Commands::Login { .. }
+                    | Commands::Containers { .. }
+                    | Commands::Exec { .. }
+                    | Commands::UpdateBeamFiles { .. }
+                    | Commands::VerifyBeamFiles { .. }
+            )
         )
     }
 }
@@ -743,6 +747,11 @@ async fn main() -> anyhow::Result<()> {
             webbrowser::open("https://docs.merigo.co/getting-started/devpackage")
                 .context("failed to open a browser")?;
         }
+        Some(Commands::Rpc { cmd }) => {
+            // TODO: Probably implement a nom parser to the output of this..
+            let op = msde_cli::game::rpc(docker, cmd).await?;
+            println!("{op:?}");
+        }
         _ => tracing::debug!("not now.."),
     }
 
@@ -782,6 +791,10 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    Rpc {
+        #[arg(num_args = 1)]
+        cmd: String,
+    },
     Docs,
     Status,
     SetProject {

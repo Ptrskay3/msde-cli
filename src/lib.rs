@@ -1,6 +1,7 @@
 pub mod central_service;
 pub mod compose;
 pub mod env;
+pub mod game;
 pub mod init;
 pub mod updater;
 

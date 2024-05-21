@@ -748,9 +748,9 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to open a browser")?;
         }
         Some(Commands::Rpc { cmd }) => {
-            // TODO: Probably implement a nom parser to the output of this..
             let op = msde_cli::game::rpc(docker, cmd).await?;
-            println!("{op:?}");
+
+            println!("{}", msde_cli::game::process_rpc_output(&op));
         }
         _ => tracing::debug!("not now.."),
     }

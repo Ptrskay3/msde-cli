@@ -8,12 +8,14 @@ use uuid::Uuid;
 
 use crate::compose::running_containers;
 
+pub const RPC_START_SEQUENCE: &str = "\u{1}\0\0\0\0\0\0\u{8}";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Stages {
     stages: Vec<StageConfig>,
 }
 
-// This is far from complete, but this is enough for creating a game.
+// This is far from complete, but this is enough to get us started for creating a game.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StageConfig {
     guid: Uuid,
@@ -72,10 +74,13 @@ pub async fn rpc(
                 output.extend(&buf[..]);
             }
             _ => {
-                todo!()
+                anyhow::bail!("expected stdout chunk, got something else")
             }
         }
     }
-
     Ok(String::from_utf8_lossy(&output).into_owned())
+}
+
+pub fn process_rpc_output(output: &str) -> &str {
+    output.trim_start_matches(RPC_START_SEQUENCE).trim()
 }

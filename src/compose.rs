@@ -410,7 +410,6 @@ pub async fn running_containers(
         .collect())
 }
 
-// TODO: This function doesn't exit, if the container crashed. We probably should exit if "exited" or "unhealthy"..
 pub async fn wait_until_heathy(docker: &docker_api::Docker, target_id: &str) -> anyhow::Result<()> {
     loop {
         let health = docker
@@ -426,15 +425,20 @@ pub async fn wait_until_heathy(docker: &docker_api::Docker, target_id: &str) -> 
             .context("Failed to get container health status")?;
 
         if health.as_str() == "healthy" {
-            break;
+            break Ok(());
+        } else if health.as_str() == "unhealthy" {
+            break Err(anyhow::Error::msg("container failed to start"));
+        } else if health.as_str() == "none" {
+            break Err(anyhow::Error::msg(format!(
+                "health check not defined for container"
+            )));
         }
 
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
-    Ok(())
 }
 
-pub async fn wait_with_timeout(docker: &docker_api::Docker, timeout: u64) -> anyhow::Result<()> {
+pub async fn wait_with_timeout(docker: &docker_api::Docker, _timeout: u64) -> anyhow::Result<()> {
     let containers = running_containers(&docker).await?;
     let msde_id = containers
         .get("/msde-vm-dev")
@@ -442,13 +446,15 @@ pub async fn wait_with_timeout(docker: &docker_api::Docker, timeout: u64) -> any
     let pb = progress_spinner();
     pb.set_message("Waiting for MSDE to be healthy..");
     tokio::select! {
-        // TODO: Maybe a much lower timeout value here? It should be ready relatively quickly.
-        _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
+        // TODO: Hardcoded the timeout for now, 60 seconds should be more than enough
+        _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
             pb.finish_with_message("❌ MSDE health check timed out.");
         }
-        _ = wait_until_heathy(&docker, msde_id) => {
-            pb.finish_with_message("✅ MSDE is healthy.");
-
+        r = wait_until_heathy(&docker, msde_id) => {
+            match r {
+                Ok(_) => pb.finish_with_message("✅ MSDE is healthy."),
+                Err(e) => { pb.finish_with_message("❌ MSDE health check failed."); tracing::error!(%e); }
+            }
         }
     }
     Ok(())

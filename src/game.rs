@@ -1,7 +1,11 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 use anyhow::Context as _;
-use docker_api::{conn::TtyChunk, opts::ExecCreateOpts, Exec};
+use docker_api::{
+    conn::TtyChunk,
+    opts::{ConsoleSize, ExecCreateOpts},
+    Exec,
+};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -13,26 +17,59 @@ pub const RPC_START_SEQUENCE: &str = "\u{1}\0\0\0\0\0\0\u{8}";
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Stages {
     stages: Vec<StageConfig>,
+    org: Option<Uuid>,
+    name: String,
+    guid: Uuid,
+    #[serde(rename = "stageForPortalMetrics")]
+    stage_for_portal_metrics: Option<serde_json::Value>,
 }
 
 // This is far from complete, but this is enough to get us started for creating a game.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StageConfig {
-    guid: Uuid,
+    guid: Option<Uuid>,
     suid: Uuid,
-    name: String,
+    name: Option<String>,
+    #[serde(default)]
     launch: bool,
     script: LocalElement,
     tuning: LocalElement,
     #[serde(rename = "macrosEnabled")]
-    macros_enabled: bool,
-    evmlistener: bool,
+    macros_enabled: Option<bool>,
+    evmlistener: Option<bool>,
+    #[serde(rename = "portalWarning")]
+    portal_warning: Option<bool>,
+    #[serde(default)]
+    maintenance: Option<bool>,
+    google: Option<Google>,
+    data: Option<Data>,
+    #[serde(default)]
+    #[serde(rename = "cmsUseCDN")]
+    cms_use_cdn: Option<bool>,
+    cms: Option<String>,
+    #[serde(rename = "buildKeyHash")]
+    build_key_hash: Option<String>,
+    analytics: Option<Analytics>,
+    tags: Option<Vec<String>>,
+    #[serde(rename = "statusUpdates")]
+    status_updates: Option<serde_json::Value>,
+    #[serde(rename = "statusUpdateInterval")]
+    status_update_interval: Option<serde_json::Value>,
+    read_block_delay: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LocalElement {
-    link: String,
+    link: Option<String>,
 }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Google {}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Data {}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Analytics {}
 
 pub fn create_game() -> anyhow::Result<()> {
     // Plan:
@@ -60,8 +97,11 @@ pub async fn rpc(
             cmd.into().as_ref(),
         ])
         .attach_stdout(true)
-        .tty(true)
-        .privileged(true)
+        .tty(false)
+        .console_size(ConsoleSize {
+            height: 1080,
+            width: 1920,
+        })
         .build();
 
     let exec = Exec::create(docker, msde_id, &opts).await?;
@@ -81,6 +121,77 @@ pub async fn rpc(
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
-pub fn process_rpc_output(output: &str) -> &str {
-    output.trim_start_matches(RPC_START_SEQUENCE).trim()
+pub fn process_rpc_output(output: &str) -> String {
+    output
+        .trim_start_matches(RPC_START_SEQUENCE)
+        .trim()
+        .chars()
+        // (Note: This probably happened because we allocated a tty)
+        // We have a leading "    �" in the output (and I didn't take the time to understand what it is yet)
+        // However, JSON should only contain alphanumeric + punctuation, so this solution may be just fine.
+        .skip_while(|c| !c.is_ascii_alphanumeric() && !c.is_ascii_punctuation())
+        .collect::<String>()
+}
+
+// TODO: implement the chunked mechanism...
+pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<Stages>> {
+    let op = rpc(
+        docker,
+        "Game.configs |> Tuple.to_list |> Enum.at(1) |> Utils.Data.encodeJson!",
+    )
+    .await?;
+    // These transforms are not very pretty and inefficient too, but it works.. sigh
+    let op = process_rpc_output(&op);
+    let op = op
+        .trim_start_matches('"')
+        .trim_end_matches('"')
+        .replace("\\\"", "\"")
+        .replace("\\\\", "\\");
+
+    let stages: Vec<Stages> = serde_json::from_str(&op)?;
+    Ok(stages)
+}
+
+pub async fn start_stage(docker: docker_api::Docker, guid: Uuid, suid: Uuid) -> anyhow::Result<()> {
+    let op = rpc(
+        docker,
+        format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; :timer.sleep(1000) ; Game.start(\"{guid}\", \"{suid}\")"),
+    )
+    .await?;
+    // TODO: don't print here, return probably
+    println!("{}", process_rpc_output(&op));
+    Ok(())
+}
+
+pub fn start_stages_batch_mapping(
+    stage_configs: Vec<Stages>,
+) -> anyhow::Result<HashMap<Uuid, Vec<Uuid>>> {
+    let mut mapping: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for stage_config in stage_configs {
+        let suids: Vec<_> = stage_config
+            .stages
+            .iter()
+            .filter_map(|stage| if stage.launch { Some(stage.suid) } else { None })
+            .collect();
+        mapping
+            .entry(stage_config.guid)
+            .or_default()
+            .extend(&suids[..])
+    }
+    Ok(mapping)
+}
+
+pub async fn start_stages_batch_commands(stage_configs: Vec<Stages>) -> anyhow::Result<(String, String)> {
+    let mapping = start_stages_batch_mapping(stage_configs)?;
+    let (sync, start) = mapping.iter().fold(
+        (String::new(), String::new()),
+        |(mut sync_acc, mut start_acc), (guid, suids)| {
+            for suid in suids {
+                sync_acc += &format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; ");
+                start_acc += &format!("Game.start(\"{guid}\", \"{suid}\") ; ");
+            }
+            (sync_acc, start_acc)
+        },
+    );
+    Ok((sync, start))
 }

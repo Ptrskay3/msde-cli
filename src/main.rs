@@ -22,6 +22,7 @@ use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use msde_cli::compose::Pipeline;
 use msde_cli::env::PackageLocalConfig;
+use msde_cli::game::process_rpc_output;
 use msde_cli::init::ensure_valid_project_path;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
@@ -79,7 +80,8 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::Rpc { .. }
+                Commands::ImportGames
+                    | Commands::Rpc { .. }
                     | Commands::Down { .. }
                     | Commands::Up { .. }
                     | Commands::Docs
@@ -749,8 +751,22 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Rpc { cmd }) => {
             let op = msde_cli::game::rpc(docker, cmd).await?;
-
             println!("{}", msde_cli::game::process_rpc_output(&op));
+        }
+        Some(Commands::ImportGames) => {
+            // TODO: Adjustable timeout value, clear indication of success or failure.
+            // Pull in stages.yml and the /games folder.
+            let cfg = msde_cli::game::get_msde_config(docker.clone()).await?;
+            let (sync, start) = msde_cli::game::start_stages_batch_commands(cfg).await?;
+            if sync.is_empty() {
+                // If there's nothing to do, don't waste time.
+                return Ok(());
+            }
+            let res = msde_cli::game::rpc(docker.clone(), sync).await?;
+            println!("{}", process_rpc_output(&res));
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            let res = msde_cli::game::rpc(docker, start).await?;
+            println!("{}", process_rpc_output(&res));
         }
         _ => tracing::debug!("not now.."),
     }
@@ -791,6 +807,7 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    ImportGames,
     Rpc {
         #[arg(num_args = 1)]
         cmd: String,

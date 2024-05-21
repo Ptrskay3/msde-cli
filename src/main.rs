@@ -756,12 +756,12 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::ImportGames) => {
             // TODO: Adjustable timeout value, clear indication of success or failure, maybe a progress spinner?
-            let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
-            // TODO: this could use async fs operations with tokio, and we may join them.
+            // also TODO: this could use async fs operations with tokio, and we may join them.
             let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
+            let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
             let merged_config = merge_stages(local, remote);
             msde_cli::game::import_stages(docker.clone(), &merged_config).await?;
-
+            // TODO: We may concurrently start them, obtain the id of the jobs, and individually ask for details on them if failed. (Codify.getSyncJobStatus/1)
             let (sync, start) = msde_cli::game::start_stages_batch_command(merged_config)?;
             if sync.is_empty() {
                 // If there's nothing to do, don't waste time.
@@ -770,7 +770,7 @@ async fn main() -> anyhow::Result<()> {
             let res = msde_cli::game::rpc(docker.clone(), sync).await?;
             println!("{}", process_rpc_output(&res));
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            // TODO: Parse the output of the start call, and suggest `docker logs -f compiler-vm-dev` to inspect the problem.
+            // TODO: Parse the output of the start call, and suggest `msde-cli log compiler` to inspect the problem.
             let res = msde_cli::game::rpc(docker, start).await?;
             println!("{}", process_rpc_output(&res));
         }

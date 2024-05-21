@@ -276,7 +276,7 @@ pub fn parse_package_local_stages_file(ctx: &Context) -> anyhow::Result<Vec<Stag
                                 suid: package_local_config.suid,
                                 guid: Some(package_local_config.guid),
                                 launch: package_local_config.launch,
-                                name: Some(package_local_config.game),
+                                name: Some(package_local_config.stage),
                                 tuning: LocalElement {
                                     link: Some(
                                         base_segment
@@ -301,7 +301,7 @@ pub fn parse_package_local_stages_file(ctx: &Context) -> anyhow::Result<Vec<Stag
                                 suid: package_local_config.suid,
                                 guid: Some(package_local_config.guid),
                                 launch: package_local_config.launch,
-                                name: Some(package_local_config.game),
+                                name: Some(package_local_config.stage),
                                 tuning: LocalElement {
                                     link: Some(
                                         base_segment
@@ -321,14 +321,14 @@ pub fn parse_package_local_stages_file(ctx: &Context) -> anyhow::Result<Vec<Stag
                                 ..Default::default()
                             }],
                             org: None,
-                            name: package_local_config.stage,
+                            name: package_local_config.game,
                             guid: package_local_config.guid,
                             ..Default::default()
                         });
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(local_config = %local_cfg.display(), %error, "local_config.yml is invalid")
+                    tracing::warn!(search_path = %local_cfg.display(), %error, "local_config.yml is invalid")
                 }
             },
             Err(error) => {

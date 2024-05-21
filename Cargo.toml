@@ -41,6 +41,7 @@ serde_yaml = "0.9.34"
 # To normalize Windows paths for docker compose commands..
 wslpath-rs = "0.1.0"
 uuid = { version = "1.8.0", features = ["v4", "serde"] }
+winnow = "0.6.8"
 
 [build-dependencies]
 flate2 = "1.0"

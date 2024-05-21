@@ -25,6 +25,7 @@ use msde_cli::env::PackageLocalConfig;
 use msde_cli::game::merge_stages;
 use msde_cli::game::process_rpc_output;
 use msde_cli::init::ensure_valid_project_path;
+use msde_cli::parsing::parse_simple_tuple;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 use sysinfo::System;
@@ -767,12 +768,19 @@ async fn main() -> anyhow::Result<()> {
                 // If there's nothing to do, don't waste time.
                 return Ok(());
             }
-            let res = msde_cli::game::rpc(docker.clone(), sync).await?;
-            println!("{}", process_rpc_output(&res));
+            let op = &msde_cli::game::rpc(docker.clone(), sync).await?;
+
+            println!(
+                "{:?}",
+                parse_simple_tuple(&mut process_rpc_output(&op).as_str())
+            );
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             // TODO: Parse the output of the start call, and suggest `msde-cli log compiler` to inspect the problem.
             let res = msde_cli::game::rpc(docker, start).await?;
-            println!("{}", process_rpc_output(&res));
+            println!(
+                "{:?}",
+                parse_simple_tuple(&mut process_rpc_output(&res).as_str())
+            );
         }
         _ => tracing::debug!("not now.."),
     }

@@ -1,20 +1,25 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
+};
 
 use anyhow::Context as _;
 use docker_api::{
     conn::TtyChunk,
     opts::{ConsoleSize, ExecCreateOpts},
-    Exec,
+    Docker, Exec,
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::compose::running_containers;
+use crate::{compose::running_containers, env::Context};
 
 pub const RPC_START_SEQUENCE: &str = "\u{1}\0\0\0\0\0\0\u{8}";
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Stages {
     stages: Vec<StageConfig>,
     org: Option<Uuid>,
@@ -24,8 +29,8 @@ pub struct Stages {
     stage_for_portal_metrics: Option<serde_json::Value>,
 }
 
-// This is far from complete, but this is enough to get us started for creating a game.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+// This is far from complete, but this is enough to get us started for creating or loading a game.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct StageConfig {
     guid: Option<Uuid>,
     suid: Uuid,
@@ -41,6 +46,7 @@ pub struct StageConfig {
     portal_warning: Option<bool>,
     #[serde(default)]
     maintenance: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     google: Option<Google>,
     data: Option<Data>,
     #[serde(default)]
@@ -58,17 +64,17 @@ pub struct StageConfig {
     read_block_delay: Option<serde_json::Value>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct LocalElement {
     link: Option<String>,
 }
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Google {}
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Data {}
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Analytics {}
 
 pub fn create_game() -> anyhow::Result<()> {
@@ -152,15 +158,17 @@ pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<S
     Ok(stages)
 }
 
-pub async fn start_stage(docker: docker_api::Docker, guid: Uuid, suid: Uuid) -> anyhow::Result<()> {
+pub async fn start_stage(
+    docker: docker_api::Docker,
+    guid: Uuid,
+    suid: Uuid,
+) -> anyhow::Result<String> {
     let op = rpc(
         docker,
         format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; :timer.sleep(1000) ; Game.start(\"{guid}\", \"{suid}\")"),
     )
     .await?;
-    // TODO: don't print here, return probably
-    println!("{}", process_rpc_output(&op));
-    Ok(())
+    Ok(op)
 }
 
 pub fn start_stages_batch_mapping(
@@ -181,7 +189,7 @@ pub fn start_stages_batch_mapping(
     Ok(mapping)
 }
 
-pub async fn start_stages_batch_commands(stage_configs: Vec<Stages>) -> anyhow::Result<(String, String)> {
+pub fn start_stages_batch_command(stage_configs: Vec<Stages>) -> anyhow::Result<(String, String)> {
     let mapping = start_stages_batch_mapping(stage_configs)?;
     let (sync, start) = mapping.iter().fold(
         (String::new(), String::new()),
@@ -194,4 +202,165 @@ pub async fn start_stages_batch_commands(stage_configs: Vec<Stages>) -> anyhow::
         },
     );
     Ok((sync, start))
+}
+
+pub async fn import_stages(docker: Docker, stages: &[Stages]) -> anyhow::Result<()> {
+    let requests: Vec<_> = stages
+        .iter()
+        .map(|stage| import_stage(docker.clone(), stage))
+        .collect();
+    futures::future::try_join_all(requests).await?;
+
+    Ok(())
+}
+
+async fn import_stage(docker: Docker, stage: &Stages) -> anyhow::Result<()> {
+    let json = serde_json::to_string(&stage)?
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"");
+    let res = rpc(docker.clone(), format!("\"{json}\" |> Game.import()")).await?;
+    if process_rpc_output(&res) != ":ok" {
+        let suids = stage.stages.iter().map(|s| s.suid).collect::<Vec<_>>();
+        tracing::warn!(guid = %stage.guid, suid = ?suids, msg = ?process_rpc_output(&res), "Stage import failed")
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PackageConfigEntry {
+    config: PathBuf,
+    scripts: PathBuf,
+    tuning: PathBuf,
+    disabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PackageStagesConfig(Vec<PackageConfigEntry>);
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PackageLocalConfig {
+    game: String,
+    stage: String,
+    guid: Uuid,
+    suid: Uuid,
+    launch: bool,
+}
+
+// Probably handle these errors gracefully, except the when the project dir is missing (as warnings maybe?)
+pub fn parse_package_local_stages_file(ctx: &Context) -> anyhow::Result<Vec<Stages>> {
+    let Some(msde_dir) = ctx.msde_dir.as_ref() else {
+        anyhow::bail!("Project dir must be set");
+    };
+    let stages_file = msde_dir.join("games/stages.yml");
+    // The volume is mounted to /usr/local/bin/merigo/games, so we the way the compiler node works we need to step back to the games folder.
+    let base_segment = PathBuf::from("../games");
+    let stages = fs::read_to_string(&stages_file)
+        .with_context(|| format!("stage file missing, should be at {}", stages_file.display()))?;
+
+    let stages: PackageStagesConfig = serde_yaml::from_str(&stages)?;
+    let mut stage_configs: Vec<Stages> = vec![];
+    for stage in stages.0 {
+        let local_cfg = msde_dir.join("games").join(stage.config);
+        match fs::read_to_string(&local_cfg) {
+            Ok(local) => match serde_yaml::from_str::<PackageLocalConfig>(&local) {
+                Ok(package_local_config) => {
+                    if let Some(idx) = stage_configs
+                        .iter()
+                        .position(|sc| sc.guid == package_local_config.guid)
+                    {
+                        stage_configs
+                            .get_mut(idx)
+                            .unwrap()
+                            .stages
+                            .push(StageConfig {
+                                suid: package_local_config.suid,
+                                guid: Some(package_local_config.guid),
+                                launch: package_local_config.launch,
+                                name: Some(package_local_config.game),
+                                tuning: LocalElement {
+                                    link: Some(
+                                        base_segment
+                                            .join(stage.tuning)
+                                            .to_string_lossy()
+                                            .into_owned(),
+                                    ),
+                                },
+                                script: LocalElement {
+                                    link: Some(
+                                        base_segment
+                                            .join(stage.scripts)
+                                            .to_string_lossy()
+                                            .into_owned(),
+                                    ),
+                                },
+                                ..Default::default()
+                            })
+                    } else {
+                        stage_configs.push(Stages {
+                            stages: vec![StageConfig {
+                                suid: package_local_config.suid,
+                                guid: Some(package_local_config.guid),
+                                launch: package_local_config.launch,
+                                name: Some(package_local_config.game),
+                                tuning: LocalElement {
+                                    link: Some(
+                                        base_segment
+                                            .join(stage.tuning)
+                                            .to_string_lossy()
+                                            .into_owned(),
+                                    ),
+                                },
+                                script: LocalElement {
+                                    link: Some(
+                                        base_segment
+                                            .join(stage.scripts)
+                                            .to_string_lossy()
+                                            .into_owned(),
+                                    ),
+                                },
+                                ..Default::default()
+                            }],
+                            org: None,
+                            name: package_local_config.stage,
+                            guid: package_local_config.guid,
+                            ..Default::default()
+                        });
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(local_config = %local_cfg.display(), %error, "local_config.yml is invalid")
+                }
+            },
+            Err(error) => {
+                tracing::warn!(search_path = %local_cfg.display(), %error, "local_config.yml not found")
+            }
+        }
+    }
+
+    Ok(stage_configs)
+}
+
+// The idea there is to first merge based on guid, then deduplicate based on the suid part.
+// Kind of ugly, we may clean this up later.
+pub fn merge_stages(this: Vec<Stages>, other: Vec<Stages>) -> Vec<Stages> {
+    let mut map: HashMap<Uuid, Stages> = HashMap::new();
+
+    let insert_stages = |vec: Vec<Stages>, map: &mut HashMap<Uuid, Stages>| {
+        for stages in vec {
+            map.entry(stages.guid)
+                .and_modify(|existing_stages| existing_stages.stages.extend(stages.stages.clone()))
+                .or_insert_with(|| stages.clone());
+        }
+    };
+
+    insert_stages(this, &mut map);
+    insert_stages(other, &mut map);
+
+    map.into_iter()
+        .map(|(_, mut stages)| {
+            let mut seen = HashSet::new();
+            stages.stages.retain(|stage| seen.insert(stage.suid));
+            stages
+        })
+        .collect()
 }

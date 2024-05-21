@@ -22,6 +22,7 @@ use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use msde_cli::compose::Pipeline;
 use msde_cli::env::PackageLocalConfig;
+use msde_cli::game::merge_stages;
 use msde_cli::game::process_rpc_output;
 use msde_cli::init::ensure_valid_project_path;
 use secrecy::ExposeSecret;
@@ -754,10 +755,14 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", msde_cli::game::process_rpc_output(&op));
         }
         Some(Commands::ImportGames) => {
-            // TODO: Adjustable timeout value, clear indication of success or failure.
-            // Pull in stages.yml and the /games folder.
-            let cfg = msde_cli::game::get_msde_config(docker.clone()).await?;
-            let (sync, start) = msde_cli::game::start_stages_batch_commands(cfg).await?;
+            // TODO: Adjustable timeout value, clear indication of success or failure, maybe a progress spinner?
+            let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
+            // TODO: this could use async fs operations with tokio, and we may join them.
+            let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
+            let merged_config = merge_stages(local, remote);
+            msde_cli::game::import_stages(docker.clone(), &merged_config).await?;
+
+            let (sync, start) = msde_cli::game::start_stages_batch_command(merged_config)?;
             if sync.is_empty() {
                 // If there's nothing to do, don't waste time.
                 return Ok(());
@@ -765,6 +770,7 @@ async fn main() -> anyhow::Result<()> {
             let res = msde_cli::game::rpc(docker.clone(), sync).await?;
             println!("{}", process_rpc_output(&res));
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            // TODO: Parse the output of the start call, and suggest `docker logs -f compiler-vm-dev` to inspect the problem.
             let res = msde_cli::game::rpc(docker, start).await?;
             println!("{}", process_rpc_output(&res));
         }

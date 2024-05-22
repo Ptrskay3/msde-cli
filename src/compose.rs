@@ -340,7 +340,7 @@ async fn write_failed_start_log<P: AsRef<Path>>(
     Ok(log_file)
 }
 
-fn progress_spinner() -> ProgressBar {
+pub fn progress_spinner() -> ProgressBar {
     let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
         .unwrap()
         .tick_strings(&[

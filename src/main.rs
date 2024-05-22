@@ -22,6 +22,7 @@ use futures::stream;
 use futures::StreamExt;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
+use msde_cli::compose::progress_spinner;
 use msde_cli::compose::Pipeline;
 use msde_cli::env::PackageLocalConfig;
 use msde_cli::game::merge_stages;
@@ -761,19 +762,23 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", msde_cli::game::process_rpc_output(&op));
         }
         Some(Commands::ImportGames) => {
-            // TODO: Adjustable timeout value, clear indication of success or failure, maybe a progress spinner?
-            // also TODO: this could use async fs operations with tokio, and we may join them.
+            let pb = progress_spinner();
+            pb.set_message("Collecting stages..");
             // also TODO: refactor to use well-defined functions
             let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
             let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
             let merged_config = merge_stages(local, remote);
+            pb.set_message("Importing stages..");
             msde_cli::game::import_stages(docker.clone(), &merged_config).await?;
             let mapping = start_stages_mapping(merged_config)?;
             let id_pairs = msde_cli::game::flatten_stage_mapping(&mapping)?;
             if id_pairs.is_empty() {
                 // If there's nothing to do, don't waste time.
+                pb.finish_with_message("Done.");
                 return Ok(());
             }
+            pb.set_message("Starting sync..");
+
             let mut sync_tasks = stream::iter(id_pairs.clone()).map(|(guid, suid)| {
                 msde_cli::game::sync_stage_with_ids(docker.clone(), guid, suid)
             });
@@ -786,7 +791,9 @@ async fn main() -> anyhow::Result<()> {
                         sync_job_ids.push((uuid, guid, suid))
                     }
                     e => {
-                        tracing::warn!(e = ?e, output = ?op, "rpc output was unexpected");
+                        pb.suspend(|| {
+                            tracing::warn!(e = ?e, output = ?op, "rpc output was unexpected");
+                        });
                     }
                 }
             }
@@ -820,14 +827,19 @@ async fn main() -> anyhow::Result<()> {
                         Ok(ElixirTuple::OkEx(OkVariant::String(status))) => match status {
                             "Finished" => None,
                             "Verify Error" | "Tuning Error" | "Scripts Error" => {
-                                tracing::error!(status = ?status, guid = %guid, suid = %suid, "sync failed");
+                                pb.suspend(|| {
+                                    tracing::error!(status = ?status, guid = %guid, suid = %suid, "sync failed");
+                                });
                                 None
                             }
                             // These are not completed yet.
                             _ => Some(job_id),
                         },
                         e => {
-                            tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                            pb.suspend(|| {
+                                tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                            });
+
                             None
                         }
                     },
@@ -881,20 +893,26 @@ async fn main() -> anyhow::Result<()> {
                                 | "Tuning Error"
                                 | "Scripts Error"
                                 | "Setting Up script File System" => {
-                                    tracing::error!(status = ?status, %guid, %suid, "sync failed");
+                                    pb.suspend(|| {
+                                        tracing::error!(status = ?status, %guid, %suid, "sync failed");
+                                    });
                                     None
                                 }
                                 // These are not completed yet.
                                 _ => Some(job_id),
                             },
                             e => {
-                                tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                                pb.suspend(|| {
+                                    tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                                });
                                 None
                             }
                         }
                     })
                     .collect();
             }
+
+            pb.set_message("Starting stages..");
 
             let mut start_tasks = stream::iter(id_pairs).map(|(guid, suid)| {
                 msde_cli::game::start_stage_with_ids(docker.clone(), guid, suid)
@@ -909,9 +927,12 @@ async fn main() -> anyhow::Result<()> {
                     Ok(ElixirTuple::ErrorEx("game_running"))
                 ) && !op.ends_with(":ok")
                 {
-                    tracing::warn!(output = ?op, %guid, %suid, "starting stage failed");
+                    pb.suspend(|| {
+                        tracing::warn!(output = ?op, %guid, %suid, "starting stage failed");
+                    });
                 }
             }
+            pb.finish_with_message("Done.")
         }
         _ => tracing::debug!("not now.."),
     }

@@ -127,7 +127,6 @@ pub async fn rpc(
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
-// TODO: a \n still can slip thru
 pub fn process_rpc_output(output: &str) -> String {
     output
         .trim_start_matches(RPC_START_SEQUENCE)
@@ -143,7 +142,7 @@ pub fn process_rpc_output(output: &str) -> String {
 // TODO: implement the chunked mechanism...
 pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<Stages>> {
     let op = rpc(
-        docker,
+        docker.clone(),
         "Game.configs |> Tuple.to_list |> Enum.at(1) |> Utils.Data.encodeJson!",
     )
     .await?;
@@ -155,8 +154,52 @@ pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<S
         .replace("\\\"", "\"")
         .replace("\\\\", "\\");
 
-    let stages: Vec<Stages> = serde_json::from_str(&op)?;
-    Ok(stages)
+    if !op.ends_with("<> ...") {
+        let stages: Vec<Stages> = serde_json::from_str(&op)?;
+        return Ok(stages);
+    }
+    get_msde_config_chunked(docker).await
+}
+
+async fn get_msde_config_chunked(docker: docker_api::Docker) -> anyhow::Result<Vec<Stages>> {
+    // The JSON is too big, we ask for it in 3500 character-long chunks (so hopefully it's less than 4096 bytes, since rpc command is limited to that)
+    // Arguably I should be using byte size here, but it's too annoying to do behind rpc calls like this one.
+    let mut chunk = 0;
+    const CHUNK_SIZE: usize = 3500;
+    let mut final_json = String::new();
+    loop {
+        // A safety measure.. if there're more than 50 chunks, we're just empty-looping and something is inevitably broken.
+        if chunk > 50 {
+            anyhow::bail!("Failed to get MSDE config.");
+        }
+        let slice_start = chunk * CHUNK_SIZE;
+        let slice_end = (chunk + 1) * CHUNK_SIZE;
+        let cmd = format!("Game.configs |> Tuple.to_list |> Enum.at(1) |> Utils.Data.encodeJson! |> String.slice({slice_start}..{slice_end})");
+        let next_chunk = rpc(docker.clone(), cmd).await?;
+        let next_chunk = process_rpc_output(&next_chunk)
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\");
+
+        // The literal empty string means we've reached the end.
+        if next_chunk.trim() == "\"\"" {
+            let stages = serde_json::from_str(&final_json)?;
+            return Ok(stages);
+        }
+        final_json.push_str(strip_once_chunked(&next_chunk, '"', chunk));
+        chunk += 1
+    }
+}
+
+fn strip_once_chunked(s: &str, chr: char, chunk: usize) -> &str {
+    let mut lower = if s.starts_with(chr) { 1 } else { 0 };
+    let upper = if s.ends_with(chr) { s.len() - 1 } else { 0 };
+    if chunk == 0 {
+        return &s[lower..upper];
+    }
+    // Any other non-first chunk will have an extra overlapping character, since Elixir ranges are *inclusive*.
+    // Strip that off.
+    lower = if s.starts_with(chr) { lower + 1 } else { lower };
+    return &s[lower..upper];
 }
 
 pub async fn sync_stage_with_ids<'a>(

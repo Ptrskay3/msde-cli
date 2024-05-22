@@ -765,9 +765,9 @@ async fn main() -> anyhow::Result<()> {
             // Using streams rather than try_join_all, since it may overwhelm erlang rpc
             // calls and we'd get errors about the node being used elsewhere.
             // TODO: Take the "disabled" key into account.
+            // also TODO: refactor to use well-defined functions
             let pb = progress_spinner();
             pb.set_message("🔍 Collecting stages..");
-            // also TODO: refactor to use well-defined functions
             let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
             let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
             let merged_config = merge_stages(local, remote);
@@ -852,7 +852,7 @@ async fn main() -> anyhow::Result<()> {
 
             while !remaining_sync_ids.is_empty() {
                 let Some(backoff_duration) = backoff.next_backoff() else {
-                    tracing::error!(ids = ?remaining_sync_ids, "No backoff left, some sync jobs failed");
+                    tracing::error!(ids = ?remaining_sync_ids, "No backoff left, some sync jobs failed to complete in time.");
                     break;
                 };
 
@@ -914,6 +914,7 @@ async fn main() -> anyhow::Result<()> {
             let mut start_tasks = stream::iter(id_pairs).map(|(guid, suid)| {
                 msde_cli::game::start_stage_with_ids(docker.clone(), guid, suid)
             });
+            let mut success = true;
             while let Some(sync_task) = start_tasks.next().await {
                 let (op, guid, suid) = sync_task.await?;
                 let op = process_rpc_output(&op);
@@ -924,12 +925,16 @@ async fn main() -> anyhow::Result<()> {
                     Ok(ElixirTuple::ErrorEx("game_running"))
                 ) && !op.ends_with(":ok")
                 {
+                    success = false;
                     pb.suspend(|| {
                         tracing::warn!(output = ?op, %guid, %suid, "starting stage failed");
                     });
                 }
             }
-            pb.finish_with_message("Done.")
+            pb.finish_with_message("Done.");
+            if !success {
+                tracing::warn!("Failed to start some stages. Consider running `msde-cli log compiler` to inspect the problem.")
+            }
         }
         _ => tracing::debug!("not now.."),
     }

@@ -35,7 +35,7 @@ fn parse_atom<'a>(input: &'_ mut &'a str) -> PResult<&'a str> {
     .parse_next(input)
 }
 
-fn parse_uuid<'a>(input: &mut &'a str) -> PResult<uuid::Uuid> {
+fn parse_uuid(input: &mut &str) -> PResult<uuid::Uuid> {
     delimited(
         space0,
         preceded(

@@ -177,18 +177,14 @@ pub async fn start_stage_with_ids<'a>(
     guid: &'a Uuid,
     suid: &'a Uuid,
 ) -> anyhow::Result<(String, &'a Uuid, &'a Uuid)> {
-    let op = rpc(
-        docker,
-        format!("Game.start(\"{guid}\", \"{suid}\") ; "),
-    )
-    .await?;
+    let op = rpc(docker, format!("Game.start(\"{guid}\", \"{suid}\") ; ")).await?;
     Ok((op, guid, suid))
 }
 
 pub fn start_stages_mapping(
     stage_configs: Vec<Stages>,
 ) -> anyhow::Result<HashMap<Uuid, Vec<Uuid>>> {
-    let mut mapping: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    let mut mapping: HashMap<_, Vec<Uuid>> = HashMap::new();
     for stage_config in stage_configs {
         let suids: Vec<_> = stage_config
             .stages
@@ -367,8 +363,8 @@ pub fn merge_stages(this: Vec<Stages>, other: Vec<Stages>) -> Vec<Stages> {
     insert_stages(this, &mut map);
     insert_stages(other, &mut map);
 
-    map.into_iter()
-        .map(|(_, mut stages)| {
+    map.into_values()
+        .map(|mut stages| {
             let mut seen = HashSet::new();
             stages.stages.retain(|stage| seen.insert(stage.suid));
             stages

@@ -762,13 +762,16 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", msde_cli::game::process_rpc_output(&op));
         }
         Some(Commands::ImportGames) => {
+            // Using streams rather than try_join_all, since it may overwhelm erlang rpc
+            // calls and we'd get errors about the node being used elsewhere.
+            // TODO: Take the "disabled" key into account.
             let pb = progress_spinner();
-            pb.set_message("Collecting stages..");
+            pb.set_message("🔍 Collecting stages..");
             // also TODO: refactor to use well-defined functions
             let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
             let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
             let merged_config = merge_stages(local, remote);
-            pb.set_message("Importing stages..");
+            pb.set_message("📥 Importing stages..");
             msde_cli::game::import_stages(docker.clone(), &merged_config).await?;
             let mapping = start_stages_mapping(merged_config)?;
             let id_pairs = msde_cli::game::flatten_stage_mapping(&mapping)?;
@@ -777,7 +780,7 @@ async fn main() -> anyhow::Result<()> {
                 pb.finish_with_message("Done.");
                 return Ok(());
             }
-            pb.set_message("Starting sync..");
+            pb.set_message("🔁 Starting sync..");
 
             let mut sync_tasks = stream::iter(id_pairs.clone()).map(|(guid, suid)| {
                 msde_cli::game::sync_stage_with_ids(docker.clone(), guid, suid)
@@ -811,11 +814,8 @@ async fn main() -> anyhow::Result<()> {
                 });
             let mut results = vec![];
             while let Some((status, guid, suid)) = sync_status.next().await {
-                match status.await {
-                    Ok(r) => {
-                        results.push((process_rpc_output(&r), guid.await, suid.await));
-                    }
-                    _ => {}
+                if let Ok(r) = status.await {
+                    results.push((process_rpc_output(&r), guid.await, suid.await));
                 }
             }
 
@@ -871,11 +871,8 @@ async fn main() -> anyhow::Result<()> {
                     });
                 let mut new_sync_results = vec![];
                 while let Some((status, guid, suid)) = sync_status.next().await {
-                    match status.await {
-                        Ok(r) => {
-                            new_sync_results.push((process_rpc_output(&r), guid.await, suid.await));
-                        }
-                        _ => {}
+                    if let Ok(r) = status.await {
+                        new_sync_results.push((process_rpc_output(&r), guid.await, suid.await));
                     }
                 }
 
@@ -912,7 +909,7 @@ async fn main() -> anyhow::Result<()> {
                     .collect();
             }
 
-            pb.set_message("Starting stages..");
+            pb.set_message("🚀 Starting stages..");
 
             let mut start_tasks = stream::iter(id_pairs).map(|(guid, suid)| {
                 msde_cli::game::start_stage_with_ids(docker.clone(), guid, suid)

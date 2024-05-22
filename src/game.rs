@@ -159,20 +159,33 @@ pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<S
     Ok(stages)
 }
 
-pub async fn start_stage(
+pub async fn sync_stage_with_ids<'a>(
     docker: docker_api::Docker,
-    guid: Uuid,
-    suid: Uuid,
-) -> anyhow::Result<String> {
+    guid: &'a Uuid,
+    suid: &'a Uuid,
+) -> anyhow::Result<(String, &'a Uuid, &'a Uuid)> {
     let op = rpc(
         docker,
-        format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; :timer.sleep(1000) ; Game.start(\"{guid}\", \"{suid}\")"),
+        format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; "),
     )
     .await?;
-    Ok(op)
+    Ok((op, guid, suid))
 }
 
-pub fn start_stages_batch_mapping(
+pub async fn start_stage_with_ids<'a>(
+    docker: docker_api::Docker,
+    guid: &'a Uuid,
+    suid: &'a Uuid,
+) -> anyhow::Result<(String, &'a Uuid, &'a Uuid)> {
+    let op = rpc(
+        docker,
+        format!("Game.start(\"{guid}\", \"{suid}\") ; "),
+    )
+    .await?;
+    Ok((op, guid, suid))
+}
+
+pub fn start_stages_mapping(
     stage_configs: Vec<Stages>,
 ) -> anyhow::Result<HashMap<Uuid, Vec<Uuid>>> {
     let mut mapping: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
@@ -190,21 +203,16 @@ pub fn start_stages_batch_mapping(
     Ok(mapping)
 }
 
-pub fn start_stages_command(
-    stage_configs: Vec<Stages>,
-) -> anyhow::Result<(Vec<String>, Vec<String>)> {
-    let mapping = start_stages_batch_mapping(stage_configs)?;
-    let (sync, start) = mapping.iter().fold(
-        (vec![], vec![]),
-        |(mut sync_acc, mut start_acc), (guid, suids)| {
-            for suid in suids {
-                sync_acc.push(format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; "));
-                start_acc.push(format!("Game.start(\"{guid}\", \"{suid}\") ; "));
-            }
-            (sync_acc, start_acc)
-        },
-    );
-    Ok((sync, start))
+pub fn flatten_stage_mapping(
+    mapping: &HashMap<Uuid, Vec<Uuid>>,
+) -> anyhow::Result<Vec<(&Uuid, &Uuid)>> {
+    let pairs = mapping.iter().fold(vec![], |mut acc, (guid, suids)| {
+        for suid in suids {
+            acc.push((guid, suid));
+        }
+        acc
+    });
+    Ok(pairs)
 }
 
 pub async fn import_stages(docker: Docker, stages: &[Stages]) -> anyhow::Result<()> {

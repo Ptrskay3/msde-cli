@@ -127,6 +127,7 @@ pub async fn rpc(
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
+// TODO: a \n still can slip thru
 pub fn process_rpc_output(output: &str) -> String {
     output
         .trim_start_matches(RPC_START_SEQUENCE)
@@ -189,14 +190,16 @@ pub fn start_stages_batch_mapping(
     Ok(mapping)
 }
 
-pub fn start_stages_batch_command(stage_configs: Vec<Stages>) -> anyhow::Result<(String, String)> {
+pub fn start_stages_command(
+    stage_configs: Vec<Stages>,
+) -> anyhow::Result<(Vec<String>, Vec<String>)> {
     let mapping = start_stages_batch_mapping(stage_configs)?;
     let (sync, start) = mapping.iter().fold(
-        (String::new(), String::new()),
+        (vec![], vec![]),
         |(mut sync_acc, mut start_acc), (guid, suids)| {
             for suid in suids {
-                sync_acc += &format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; ");
-                start_acc += &format!("Game.start(\"{guid}\", \"{suid}\") ; ");
+                sync_acc.push(format!("Game.sync(\"{guid}\", \"{suid}\", :all) ; "));
+                start_acc.push(format!("Game.start(\"{guid}\", \"{suid}\") ; "));
             }
             (sync_acc, start_acc)
         },

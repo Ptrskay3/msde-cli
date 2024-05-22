@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
+use backoff::backoff::Backoff;
 use clap::ValueEnum;
 use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::{generate, shells::Shell};
@@ -17,6 +18,7 @@ use docker_api::opts::ContainerListOpts;
 use docker_api::opts::ContainerStopOpts;
 use docker_api::Docker;
 use flate2::bufread::GzDecoder;
+use futures::stream;
 use futures::StreamExt;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
@@ -26,6 +28,8 @@ use msde_cli::game::merge_stages;
 use msde_cli::game::process_rpc_output;
 use msde_cli::init::ensure_valid_project_path;
 use msde_cli::parsing::parse_simple_tuple;
+use msde_cli::parsing::ElixirTuple;
+use msde_cli::parsing::OkVariant;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 use sysinfo::System;
@@ -758,29 +762,133 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::ImportGames) => {
             // TODO: Adjustable timeout value, clear indication of success or failure, maybe a progress spinner?
             // also TODO: this could use async fs operations with tokio, and we may join them.
+            // also TODO: refactor to use well-defined functions
+            // also TODO: provide more context for failures
+            // also TODO: don't try to start stages that failed to sync
             let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
             let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
             let merged_config = merge_stages(local, remote);
             msde_cli::game::import_stages(docker.clone(), &merged_config).await?;
-            // TODO: We may concurrently start them, obtain the id of the jobs, and individually ask for details on them if failed. (Codify.getSyncJobStatus/1)
-            let (sync, start) = msde_cli::game::start_stages_batch_command(merged_config)?;
-            if sync.is_empty() {
+            let (syncs, starts) = msde_cli::game::start_stages_command(merged_config)?;
+            if syncs.is_empty() {
                 // If there's nothing to do, don't waste time.
                 return Ok(());
             }
-            let op = &msde_cli::game::rpc(docker.clone(), sync).await?;
+            let mut sync_tasks =
+                stream::iter(syncs).map(|sync| msde_cli::game::rpc(docker.clone(), sync));
+            let mut sync_job_ids = vec![];
+            while let Some(sync_task) = sync_tasks.next().await {
+                let op = process_rpc_output(&sync_task.await?);
+                match parse_simple_tuple(&mut op.as_str()) {
+                    Ok(ElixirTuple::OkEx(OkVariant::Uuid(uuid))) => sync_job_ids.push(uuid),
+                    e => {
+                        tracing::warn!(e = ?e, output = ?op, "rpc output was unexpected");
+                    }
+                }
+            }
 
-            println!(
-                "{:?}",
-                parse_simple_tuple(&mut process_rpc_output(&op).as_str())
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            // TODO: Parse the output of the start call, and suggest `msde-cli log compiler` to inspect the problem.
-            let res = msde_cli::game::rpc(docker, start).await?;
-            println!(
-                "{:?}",
-                parse_simple_tuple(&mut process_rpc_output(&res).as_str())
-            );
+            let mut sync_status = futures::stream::iter(sync_job_ids.clone()).map(|id| {
+                msde_cli::game::rpc(docker.clone(), format!("Codify.getSyncJobStatus(\"{id}\")"))
+            });
+            let mut results = vec![];
+            while let Some(status) = sync_status.next().await {
+                match status.await {
+                    Ok(r) => {
+                        results.push(process_rpc_output(&r));
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut remaining_sync_ids: Vec<_> = results
+                .iter()
+                .zip(sync_job_ids.iter())
+                .filter_map(|(r, job_id)| match parse_simple_tuple(&mut r.as_str()) {
+                    Ok(ElixirTuple::OkEx(OkVariant::String(status))) => match status {
+                        "Finished" => None,
+                        "Verify Error" | "Tuning Error" | "Scripts Error" => {
+                            tracing::error!(id = ?job_id, status = ?status, "sync failed");
+                            None
+                        }
+                        // These are not completed yet.
+                        _ => Some(job_id),
+                    },
+                    e => {
+                        tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                        None
+                    }
+                })
+                .collect();
+
+            let mut backoff = backoff::ExponentialBackoffBuilder::new()
+                .with_max_elapsed_time(Some(Duration::from_secs(30)))
+                .build();
+
+            while !remaining_sync_ids.is_empty() {
+                let Some(backoff_duration) = backoff.next_backoff() else {
+                    tracing::error!(ids = ?remaining_sync_ids, "No backoff left, some sync jobs failed");
+                    break;
+                };
+
+                tokio::time::sleep(backoff_duration).await;
+
+                let mut sync_status = futures::stream::iter(remaining_sync_ids.clone()).map(|id| {
+                    msde_cli::game::rpc(
+                        docker.clone(),
+                        format!("Codify.getSyncJobStatus(\"{id}\")"),
+                    )
+                });
+                let mut new_sync_results = vec![];
+                while let Some(status) = sync_status.next().await {
+                    match status.await {
+                        Ok(r) => {
+                            new_sync_results.push(process_rpc_output(&r));
+                        }
+                        _ => {}
+                    }
+                }
+
+                remaining_sync_ids = new_sync_results
+                    .iter()
+                    .zip(remaining_sync_ids.into_iter())
+                    .filter_map(|(r, job_id)| match parse_simple_tuple(&mut r.as_str()) {
+                        Ok(ElixirTuple::OkEx(OkVariant::String(status))) => match status {
+                            "Finished" => None,
+                            // In a backoff situation, if "Setting Up script File System" is still in progress, that means it's stuck cause
+                            // the folder doesn't exist or something.
+                            // Arguably we should handle this better in MSDE, but let's handle this here for now..
+                            "Verify Error"
+                            | "Tuning Error"
+                            | "Scripts Error"
+                            | "Setting Up script File System" => {
+                                tracing::error!(id = ?job_id, status = ?status, "sync failed");
+                                None
+                            }
+                            // These are not completed yet.
+                            _ => Some(job_id),
+                        },
+                        e => {
+                            tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                            None
+                        }
+                    })
+                    .collect();
+            }
+
+            let mut start_tasks =
+                stream::iter(starts).map(|start| msde_cli::game::rpc(docker.clone(), start));
+            while let Some(sync_task) = start_tasks.next().await {
+                let op = process_rpc_output(&sync_task.await?);
+                // FIXME: Parsing this properly is a pain, because we may get output from the Job script like this:
+                // "[36m09:12:13.597 debug [Job.Script] Crashed reading types(), or no types defined %ArgumentError{message: \"argument error\"}\n\u{1b}[0m:ok"
+                if !matches!(
+                    parse_simple_tuple(&mut op.as_str()),
+                    Ok(ElixirTuple::ErrorEx("game_running"))
+                ) && !op.ends_with(":ok")
+                {
+                    tracing::warn!(output = ?op, "starting stage failed");
+                }
+            }
         }
         _ => tracing::debug!("not now.."),
     }

@@ -11,9 +11,10 @@ use backoff::backoff::Backoff;
 use clap::ValueEnum;
 use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::{generate, shells::Shell};
+use dialoguer::Input;
 // May work better!
 // https://github.com/fussybeaver/bollard
-use dialoguer::Input;
+use docker_api::conn::TtyChunk;
 use docker_api::opts::ContainerListOpts;
 use docker_api::opts::ContainerStopOpts;
 use docker_api::Docker;
@@ -23,6 +24,7 @@ use futures::StreamExt;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use msde_cli::compose::progress_spinner;
+use msde_cli::compose::running_containers;
 use msde_cli::compose::Pipeline;
 use msde_cli::env::PackageLocalConfig;
 use msde_cli::game::merge_stages;
@@ -245,7 +247,7 @@ async fn create_index(
 static LOGLEVEL: &str = "msde_cli=trace";
 
 #[cfg(not(debug_assertions))]
-static LOGLEVEL: &str = "msde_cli=debug"; // TODO: this should be info level probably
+static LOGLEVEL: &str = "msde_cli=info";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -656,6 +658,7 @@ async fn main() -> anyhow::Result<()> {
             Pipeline::down_all(msde_dir, timeout).await?;
         }
         Some(Commands::Init { path, force }) => {
+            // TODO: On Windows suggest to use the /home/.. directory instead of /mnt/c, since many things go wrong if using the Windows fs.
             // FIXME: bug: on Windows, if .msde directory doesnt exist and we just accept the default, it doesn't create the config.
             // TODO: integrate login, integrate BEAM file stuff.
             // Prompt whether example games should be included
@@ -767,7 +770,7 @@ async fn main() -> anyhow::Result<()> {
             // TODO: Take the "disabled" key into account.
             // also TODO: refactor to use well-defined functions
             let pb = progress_spinner();
-            pb.set_message("🔍 Collecting stages..");
+            pb.set_message("🔍 Discovering stages..");
             let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
             let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
             let merged_config = merge_stages(local, remote);
@@ -909,7 +912,7 @@ async fn main() -> anyhow::Result<()> {
                     .collect();
             }
 
-            pb.set_message("🚀 Starting stages..");
+            pb.set_message("🚀 Launching stages..");
 
             let mut start_tasks = stream::iter(id_pairs).map(|(guid, suid)| {
                 msde_cli::game::start_stage_with_ids(docker.clone(), guid, suid)
@@ -933,10 +936,28 @@ async fn main() -> anyhow::Result<()> {
             }
             pb.finish_with_message("Done.");
             if !success {
-                tracing::warn!("Failed to start some stages. Consider running `msde-cli log compiler` to inspect the problem.")
+                tracing::warn!("Failed to start some stages. Consider running `msde-cli log compiler` in a different terminal and try again.")
             }
         }
-        _ => tracing::debug!("not now.."),
+        Some(Commands::Log { target }) => {
+            let id = target.get_id(&docker).await?;
+
+            let container = docker.containers().get(id);
+
+            let mut multiplexer = container.attach().await?;
+            while let Some(chunk) = multiplexer.next().await {
+                match chunk {
+                    Ok(TtyChunk::StdOut(chunk) | TtyChunk::StdErr(chunk)) => {
+                        print!("{}", String::from_utf8_lossy(&chunk));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {
+            tracing::debug!("not now..");
+            unimplemented!();
+        }
     }
 
     Ok(())
@@ -1086,6 +1107,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         no_verify: bool,
     },
+    // TODO: This command doesn't really make sense. Maybe as an element of a project upgrade?
     /// Checks and stops all running containers.
     Containers {
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]
@@ -1154,6 +1176,20 @@ impl Target {
             | Target::Web3 { version, .. }
             | Target::Compiler { version } => version.as_ref(),
         }
+    }
+
+    async fn get_id(&self, docker: &Docker) -> anyhow::Result<String> {
+        let target = match self {
+            Target::Msde { .. } => "/msde-vm-dev",
+            Target::Bot { .. } => "/bot-vm-dev",
+            Target::Web3 { .. } => "/web3-vm-dev",
+            Target::Compiler { .. } => "/compiler-vm-dev",
+        };
+        let containers = running_containers(docker).await?;
+        let container_id = containers
+            .get(target)
+            .context("Target container is not running")?;
+        Ok(container_id.clone())
     }
 
     fn images_and_tags(&self) -> Vec<(String, String)> {

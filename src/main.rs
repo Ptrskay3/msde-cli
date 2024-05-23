@@ -90,7 +90,7 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::ImportGames
+                Commands::ImportGames { .. }
                     | Commands::Rpc { .. }
                     | Commands::Down { .. }
                     | Commands::Up { .. }
@@ -645,11 +645,18 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Up {
             mut features,
             timeout,
+            quiet,
+            attach,
         }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout, &docker).await?;
+            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout, &docker, quiet)
+                .await?;
+            if attach {
+                tracing::info!("Attaching to MSDE logs..");
+                Target::Msde { version: None }.attach(&docker).await?;
+            }
         }
         Some(Commands::Down { timeout }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
@@ -764,12 +771,12 @@ async fn main() -> anyhow::Result<()> {
             let op = msde_cli::game::rpc(docker, cmd).await?;
             println!("{}", msde_cli::game::process_rpc_output(&op));
         }
-        Some(Commands::ImportGames) => {
+        Some(Commands::ImportGames { quiet }) => {
             // Using streams rather than try_join_all, since it may overwhelm erlang rpc
             // calls and we'd get errors about the node being used elsewhere.
             // TODO: Take the "disabled" key into account.
             // also TODO: refactor to use well-defined functions
-            let pb = progress_spinner();
+            let pb = progress_spinner(quiet);
             pb.set_message("🔍 Discovering stages..");
             let local = msde_cli::game::parse_package_local_stages_file(&ctx)?;
             let remote = msde_cli::game::get_msde_config(docker.clone()).await?;
@@ -940,19 +947,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Some(Commands::Log { target }) => {
-            let id = target.get_id(&docker).await?;
-
-            let container = docker.containers().get(id);
-
-            let mut multiplexer = container.attach().await?;
-            while let Some(chunk) = multiplexer.next().await {
-                match chunk {
-                    Ok(TtyChunk::StdOut(chunk) | TtyChunk::StdErr(chunk)) => {
-                        print!("{}", String::from_utf8_lossy(&chunk));
-                    }
-                    _ => {}
-                }
-            }
+            target.attach(&docker).await?;
         }
         _ => {
             tracing::debug!("not now..");
@@ -996,7 +991,10 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    ImportGames,
+    ImportGames {
+        #[arg(short, long, action = ArgAction::SetTrue)]
+        quiet: bool,
+    },
     Rpc {
         #[arg(num_args = 1)]
         cmd: String,
@@ -1029,6 +1027,7 @@ enum Commands {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
     },
+    /// Start the services, and wait for the MSDE to be healthy.
     Up {
         #[arg(short, long, value_delimiter = ',', num_args = 1..)]
         features: Vec<msde_cli::env::Feature>,
@@ -1038,6 +1037,13 @@ enum Commands {
         ///   interval: humantime::Duration,
         #[arg(short, long, default_value_t = 100)]
         timeout: u64,
+
+        #[arg(short, long, action = ArgAction::SetTrue)]
+        quiet: bool,
+
+        /// After successful start attach to MSDE container logs.
+        #[arg(long, action = ArgAction::SetTrue)]
+        attach: bool,
     },
     /// Wipe out all config files and folders.
     Clean {
@@ -1169,6 +1175,22 @@ enum Web3Kind {
 }
 
 impl Target {
+    async fn attach(&self, docker: &Docker) -> anyhow::Result<()> {
+        let id = self.get_id(&docker).await?;
+
+        let container = docker.containers().get(id);
+
+        let mut multiplexer = container.attach().await?;
+        while let Some(chunk) = multiplexer.next().await {
+            match chunk {
+                Ok(TtyChunk::StdOut(chunk) | TtyChunk::StdErr(chunk)) => {
+                    print!("{}", String::from_utf8_lossy(&chunk));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
     fn get_version(&self) -> Option<&String> {
         match self {
             Target::Msde { version }

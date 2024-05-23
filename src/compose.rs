@@ -6,7 +6,7 @@ use std::{
 
 use crate::env::Feature;
 use anyhow::Context as _;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -183,12 +183,13 @@ impl Pipeline {
         msde_dir: P,
         timeout: u64,
         docker: &docker_api::Docker,
+        quiet: bool,
     ) -> anyhow::Result<()> {
         features.sort();
 
         let volumes =
             generate_volumes(features, &msde_dir).context("Failed to generate volume bindings")?;
-        let pb = progress_spinner();
+        let pb = progress_spinner(quiet);
         pb.set_message("Booting base services..");
         let child = Compose::up_custom(
             &[DOCKER_COMPOSE_BASE],
@@ -208,7 +209,7 @@ impl Pipeline {
         let bot_enabled = features.iter().any(|f| matches!(f, Feature::Bot));
 
         for (i, feature) in features.iter().enumerate() {
-            let pb = progress_spinner();
+            let pb = progress_spinner(quiet);
             pb.set_message(format!("Booting {}..", feature));
             let f = feature.to_target();
             let mut child = Compose::up_custom(
@@ -239,7 +240,7 @@ impl Pipeline {
         }
 
         if !bot_enabled {
-            let pb = progress_spinner();
+            let pb = progress_spinner(quiet);
             pb.set_message("Booting MSDE..");
             let mut child = Compose::up_custom(
                 &[DOCKER_COMPOSE_MAIN],
@@ -260,7 +261,7 @@ impl Pipeline {
             drop(stdin);
             wait_child_with_timeout(child, &pb, timeout, msde_dir, "MSDE").await?;
         }
-        wait_with_timeout(docker, timeout).await?;
+        wait_with_timeout(docker, timeout, quiet).await?;
         Ok(())
     }
 }
@@ -340,7 +341,7 @@ async fn write_failed_start_log<P: AsRef<Path>>(
     Ok(log_file)
 }
 
-pub fn progress_spinner() -> ProgressBar {
+pub fn progress_spinner(quiet: bool) -> ProgressBar {
     let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
         .unwrap()
         .tick_strings(&[
@@ -349,6 +350,9 @@ pub fn progress_spinner() -> ProgressBar {
             "⢁",
         ]);
     let pb = ProgressBar::new(1);
+    if quiet {
+        pb.set_draw_target(ProgressDrawTarget::hidden());
+    }
     pb.set_style(spinner_style);
     pb.enable_steady_tick(std::time::Duration::from_millis(80));
     pb
@@ -436,12 +440,16 @@ pub async fn wait_until_heathy(docker: &docker_api::Docker, target_id: &str) -> 
     }
 }
 
-pub async fn wait_with_timeout(docker: &docker_api::Docker, _timeout: u64) -> anyhow::Result<()> {
+pub async fn wait_with_timeout(
+    docker: &docker_api::Docker,
+    _timeout: u64,
+    quiet: bool,
+) -> anyhow::Result<()> {
     let containers = running_containers(docker).await?;
     let msde_id = containers
         .get("/msde-vm-dev")
         .context("MSDE is not running somehow?")?;
-    let pb = progress_spinner();
+    let pb = progress_spinner(quiet);
     pb.set_message("Waiting for MSDE to be healthy..");
     tokio::select! {
         // TODO: Hardcoded the timeout for now, 60 seconds should be more than enough

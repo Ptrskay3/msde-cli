@@ -651,12 +651,20 @@ async fn main() -> anyhow::Result<()> {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            Pipeline::from_features(features.as_mut_slice(), msde_dir, timeout, &docker, quiet)
-                .await?;
-            if attach {
-                tracing::info!("Attaching to MSDE logs..");
-                Target::Msde { version: None }.attach(&docker).await?;
-            }
+            let attach_future = if attach {
+                Some(Target::Msde { version: None }.attach(&docker))
+            } else {
+                None
+            };
+            Pipeline::from_features(
+                features.as_mut_slice(),
+                msde_dir,
+                timeout,
+                &docker,
+                quiet,
+                attach_future,
+            )
+            .await?;
         }
         Some(Commands::Down { timeout }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
@@ -786,8 +794,7 @@ async fn main() -> anyhow::Result<()> {
             let mapping = start_stages_mapping(merged_config)?;
             let id_pairs = msde_cli::game::flatten_stage_mapping(&mapping)?;
             if id_pairs.is_empty() {
-                // If there's nothing to do, don't waste time.
-                pb.finish_with_message("Done.");
+                pb.finish_with_message("No importable games found. Done.");
                 return Ok(());
             }
             pb.set_message("🔁 Starting sync..");

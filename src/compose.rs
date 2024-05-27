@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -178,12 +179,13 @@ impl Pipeline {
         Ok(())
     }
 
-    pub async fn from_features<P: AsRef<Path>>(
+    pub async fn from_features<P: AsRef<Path>, F: Future<Output = anyhow::Result<()>>>(
         features: &mut [Feature],
         msde_dir: P,
         timeout: u64,
         docker: &docker_api::Docker,
         quiet: bool,
+        attach_future: Option<F>,
     ) -> anyhow::Result<()> {
         features.sort();
 
@@ -261,7 +263,16 @@ impl Pipeline {
             drop(stdin);
             wait_child_with_timeout(child, &pb, timeout, msde_dir, "MSDE").await?;
         }
-        wait_with_timeout(docker, timeout, quiet).await?;
+        if let Some(attach_future) = attach_future {
+            pb.set_draw_target(ProgressDrawTarget::hidden());
+            tracing::info!("Attaching to MSDE logs..");
+            // Attaching overrides quiet, since we don't want to intercept logs from the container with the progress spinner.
+            if let Err(e) = tokio::try_join!(attach_future, wait_with_timeout(docker, true)) {
+                tracing::error!(error = %e, "Failed to start MSDE");
+            }
+        } else {
+            wait_with_timeout(docker, quiet).await?;
+        }
         Ok(())
     }
 }
@@ -440,11 +451,7 @@ pub async fn wait_until_heathy(docker: &docker_api::Docker, target_id: &str) -> 
     }
 }
 
-pub async fn wait_with_timeout(
-    docker: &docker_api::Docker,
-    _timeout: u64,
-    quiet: bool,
-) -> anyhow::Result<()> {
+pub async fn wait_with_timeout(docker: &docker_api::Docker, quiet: bool) -> anyhow::Result<()> {
     let containers = running_containers(docker).await?;
     let msde_id = containers
         .get("/msde-vm-dev")

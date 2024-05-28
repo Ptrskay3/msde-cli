@@ -37,6 +37,7 @@ pub struct ComposeOpts<'a> {
     pub daemon: bool,
     pub target: Option<&'a str>,
     pub file_streamed_stdin: bool,
+    pub build: bool,
 }
 
 impl<'a> ComposeOpts<'a> {
@@ -44,6 +45,9 @@ impl<'a> ComposeOpts<'a> {
         let mut args = vec![];
         if self.daemon {
             args.push("-d");
+        }
+        if self.build {
+            args.push("--build");
         }
         if let Some(target) = self.target {
             args.push(target)
@@ -185,6 +189,7 @@ impl Pipeline {
         timeout: u64,
         docker: &docker_api::Docker,
         quiet: bool,
+        build: bool,
         attach_future: Option<F>,
     ) -> anyhow::Result<()> {
         features.sort();
@@ -199,6 +204,7 @@ impl Pipeline {
                 daemon: true,
                 target: None,
                 file_streamed_stdin: false,
+                build,
             }),
             Stdio::null(),
             Stdio::null(),
@@ -225,6 +231,7 @@ impl Pipeline {
                         None
                     },
                     file_streamed_stdin: i == last_feature_idx && bot_enabled,
+                    build,
                 }),
                 Stdio::piped(),
                 Stdio::piped(),
@@ -250,6 +257,7 @@ impl Pipeline {
                     daemon: true,
                     target: Some("msde-vm-dev"),
                     file_streamed_stdin: true,
+                    build,
                 }),
                 Stdio::piped(),
                 Stdio::piped(),

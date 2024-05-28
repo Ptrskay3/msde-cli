@@ -3,19 +3,25 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
+    time::Duration,
 };
 
 use anyhow::Context as _;
+use backoff::backoff::Backoff;
 use docker_api::{
     conn::TtyChunk,
     opts::{ConsoleSize, ExecCreateOpts},
     Docker, Exec,
 };
-use futures::StreamExt;
+use futures::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{compose::running_containers, env::Context};
+use crate::{
+    compose::{progress_spinner, running_containers},
+    env::Context,
+    parsing::{parse_simple_tuple, ElixirTuple, OkVariant},
+};
 
 pub const RPC_START_SEQUENCE: &str = "\u{1}\0\0\0\0\0\0\u{8}";
 
@@ -132,8 +138,6 @@ pub fn process_rpc_output(output: &str) -> String {
         .trim_start_matches(RPC_START_SEQUENCE)
         .trim()
         .chars()
-        // (Note: This probably happened because we allocated a tty)
-        // We have a leading "    �" in the output (and I didn't take the time to understand what it is yet)
         // However, JSON should only contain alphanumeric + punctuation, so this solution may be just fine.
         .skip_while(|c| !c.is_ascii_alphanumeric() && !c.is_ascii_punctuation())
         .collect::<String>()
@@ -164,6 +168,8 @@ pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<S
 async fn get_msde_config_chunked(docker: docker_api::Docker) -> anyhow::Result<Vec<Stages>> {
     // The JSON is too big, we ask for it in 3500 character-long chunks (so hopefully it's less than 4096 bytes, since rpc command is limited to that)
     // Arguably I should be using byte size here, but it's too annoying to do behind rpc calls like this one.
+    // If we want to be very safe, we should use 1024 as CHUNK_SIZE, since any unicode character is at most 4 bytes, so 4 * 1024 is exactly 4096 and we
+    // still get full output - this is very unlikely, because all "frequent" alphanumeric characters and punctuation are usually in the 1 (maybe 2) byte range.
     let mut chunk = 0;
     const CHUNK_SIZE: usize = 3500;
     let mut final_json = String::new();
@@ -413,4 +419,169 @@ pub fn merge_stages(this: Vec<Stages>, other: Vec<Stages>) -> Vec<Stages> {
             stages
         })
         .collect()
+}
+
+pub async fn import_games(ctx: &Context, docker: Docker, quiet: bool) -> anyhow::Result<()> {
+    // Using streams rather than try_join_all, since it may overwhelm erlang rpc
+    // calls and we'd get errors about the node being used elsewhere.
+    // TODO: Take the "disabled" key into account.
+    // also TODO: refactor to use well-defined functions
+    let pb = progress_spinner(quiet);
+    pb.set_message("🔍 Discovering stages..");
+    let local = parse_package_local_stages_file(&ctx)?;
+    let remote = get_msde_config(docker.clone()).await?;
+    let merged_config = merge_stages(local, remote);
+    pb.set_message("📥 Importing stages..");
+    import_stages(docker.clone(), &merged_config).await?;
+    let mapping = start_stages_mapping(merged_config)?;
+    let id_pairs = flatten_stage_mapping(&mapping)?;
+    if id_pairs.is_empty() {
+        pb.finish_with_message("No importable games found. Done.");
+        return Ok(());
+    }
+    pb.set_message("🔁 Starting sync..");
+
+    let mut sync_tasks = stream::iter(id_pairs.clone())
+        .map(|(guid, suid)| sync_stage_with_ids(docker.clone(), guid, suid));
+    let mut sync_job_ids = vec![];
+    while let Some(sync_task) = sync_tasks.next().await {
+        let (op, guid, suid) = sync_task.await?;
+        let op = process_rpc_output(&op);
+        match parse_simple_tuple(&mut op.as_str()) {
+            Ok(ElixirTuple::OkEx(OkVariant::Uuid(uuid))) => sync_job_ids.push((uuid, guid, suid)),
+            e => {
+                pb.suspend(|| {
+                    tracing::warn!(e = ?e, output = ?op, "rpc output was unexpected");
+                });
+            }
+        }
+    }
+
+    let mut sync_status = futures::stream::iter(sync_job_ids.clone()).map(|(id, guid, suid)| {
+        (
+            rpc(docker.clone(), format!("Codify.getSyncJobStatus(\"{id}\")")),
+            async move { guid },
+            async move { suid },
+        )
+    });
+    let mut results = vec![];
+    while let Some((status, guid, suid)) = sync_status.next().await {
+        if let Ok(r) = status.await {
+            results.push((process_rpc_output(&r), guid.await, suid.await));
+        }
+    }
+
+    let mut remaining_sync_ids: Vec<_> = results
+                .iter()
+                .zip(sync_job_ids.iter())
+                .filter_map(
+                    |((r, guid, suid), job_id)| match parse_simple_tuple(&mut r.as_str()) {
+                        Ok(ElixirTuple::OkEx(OkVariant::String(status))) => match status {
+                            "Finished" => None,
+                            "Verify Error" | "Tuning Error" | "Scripts Error" => {
+                                pb.suspend(|| {
+                                    tracing::error!(status = ?status, guid = %guid, suid = %suid, "sync failed");
+                                });
+                                None
+                            }
+                            // These are not completed yet.
+                            _ => Some(job_id),
+                        },
+                        e => {
+                            pb.suspend(|| {
+                                tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                            });
+
+                            None
+                        }
+                    },
+                )
+                .collect();
+
+    let mut backoff = backoff::ExponentialBackoffBuilder::new()
+        .with_max_elapsed_time(Some(Duration::from_secs(30)))
+        .build();
+
+    while !remaining_sync_ids.is_empty() {
+        let Some(backoff_duration) = backoff.next_backoff() else {
+            tracing::error!(ids = ?remaining_sync_ids, "No backoff left, some sync jobs failed to complete in time.");
+            break;
+        };
+
+        tokio::time::sleep(backoff_duration).await;
+
+        let mut sync_status =
+            futures::stream::iter(remaining_sync_ids.clone()).map(|(id, guid, suid)| {
+                (
+                    rpc(docker.clone(), format!("Codify.getSyncJobStatus(\"{id}\")")),
+                    async move { guid },
+                    async move { suid },
+                )
+            });
+        let mut new_sync_results = vec![];
+        while let Some((status, guid, suid)) = sync_status.next().await {
+            if let Ok(r) = status.await {
+                new_sync_results.push((process_rpc_output(&r), guid.await, suid.await));
+            }
+        }
+
+        remaining_sync_ids = new_sync_results
+            .iter()
+            .zip(remaining_sync_ids.into_iter())
+            .filter_map(|((r, guid, suid), job_id)| {
+                match parse_simple_tuple(&mut r.as_str()) {
+                    Ok(ElixirTuple::OkEx(OkVariant::String(status))) => match status {
+                        "Finished" => None,
+                        // In a backoff situation, if "Setting Up script File System" is still in progress, that means it's stuck cause
+                        // the folder doesn't exist or something.
+                        // Arguably we should handle this better in MSDE, but let's handle this here for now..
+                        "Verify Error"
+                        | "Tuning Error"
+                        | "Scripts Error"
+                        | "Setting Up script File System" => {
+                            pb.suspend(|| {
+                                tracing::error!(status = ?status, %guid, %suid, "sync failed");
+                            });
+                            None
+                        }
+                        // These are not completed yet.
+                        _ => Some(job_id),
+                    },
+                    e => {
+                        pb.suspend(|| {
+                            tracing::warn!(e = ?e, output = ?r, "rpc output was unexpected");
+                        });
+                        None
+                    }
+                }
+            })
+            .collect();
+    }
+
+    pb.set_message("🚀 Launching stages..");
+
+    let mut start_tasks =
+        stream::iter(id_pairs).map(|(guid, suid)| start_stage_with_ids(docker.clone(), guid, suid));
+    let mut success = true;
+    while let Some(sync_task) = start_tasks.next().await {
+        let (op, guid, suid) = sync_task.await?;
+        let op = process_rpc_output(&op);
+        // FIXME: Parsing this properly is a pain, because we may get output from the Job script like this:
+        // "[36m09:12:13.597 debug [Job.Script] Crashed reading types(), or no types defined %ArgumentError{message: \"argument error\"}\n\u{1b}[0m:ok"
+        if !matches!(
+            parse_simple_tuple(&mut op.as_str()),
+            Ok(ElixirTuple::ErrorEx("game_running"))
+        ) && !op.ends_with(":ok")
+        {
+            success = false;
+            pb.suspend(|| {
+                tracing::warn!(output = ?op, %guid, %suid, "starting stage failed");
+            });
+        }
+    }
+    pb.finish_with_message("Done.");
+    if !success {
+        tracing::warn!("Failed to start some stages. Consider running `msde-cli log compiler` in a different terminal and try again.");
+    }
+    Ok(())
 }

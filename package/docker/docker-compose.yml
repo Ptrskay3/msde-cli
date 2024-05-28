@@ -40,6 +40,8 @@ services:
         condition: service_started
     volumes:
       - msde-log-dev:/usr/local/bin/merigo/msde/log/msde
+      - ~/.ssh:/root/.ssh:ro
+      - ~/.gitconfig:/root/.gitconfig:ro
     ports:
       - '8080:8080'
       - '8089:8089'
@@ -66,6 +68,9 @@ services:
     hostname: 172.99.0.6
     environment:
       - LC_ALL=en_US.UTF-8
+    volumes:
+      - ~/.ssh:/root/.ssh:ro
+      - ~/.gitconfig:/root/.gitconfig:ro
     networks:
       backend:
       docker_consul:

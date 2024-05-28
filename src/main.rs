@@ -84,6 +84,7 @@ impl Command {
             None | Some(
                 Commands::ImportGames { .. }
                     | Commands::Rpc { .. }
+                    | Commands::Log { .. }
                     | Commands::Down { .. }
                     | Commands::Up { .. }
                     | Commands::Docs
@@ -503,118 +504,6 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             login(&ctx, ghcr_key, pull_key, file)?;
         }
-        None => {
-            tracing::trace!("No subcommand was passed, starting diagnostic..");
-            let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
-
-            let mut sys = System::new_all();
-
-            sys.refresh_all();
-
-            println!("System:");
-            println!("total memory  : {} bytes", sys.total_memory());
-            println!("used memory   : {} bytes", sys.used_memory());
-            println!("total swap    : {} bytes", sys.total_swap());
-            println!("used swap     : {} bytes", sys.used_swap());
-            #[cfg(not(target_arch = "aarch64"))]
-            {
-                use raw_cpuid::CpuId;
-                let cpuid = CpuId::new();
-                if let Some(cpu_info) = cpuid.get_processor_brand_string() {
-                    println!("CPU           : {}", cpu_info.as_str());
-                }
-            }
-            println!("system name   : {}", sysinfo::System::name().unwrap());
-            println!(
-                "kernel version: {}",
-                sysinfo::System::kernel_version().unwrap()
-            );
-            println!(
-                "OS version    : {}",
-                sysinfo::System::long_os_version().unwrap()
-            );
-            println!("host name     : {}", sysinfo::System::host_name().unwrap());
-            println!("CPU arch      : {}", sysinfo::System::cpu_arch().unwrap());
-            println!(
-                "Docker version: {}",
-                docker.version().await.unwrap().version.unwrap()
-            );
-
-            let opts = docker_api::opts::ImageListOpts::default();
-            let docker_images = docker.images().list(&opts).await?;
-            let mut local_image_stats: HashMap<String, Vec<String>> = HashMap::new();
-
-            for docker_image in &docker_images {
-                if docker_image
-                    .repo_tags
-                    .iter()
-                    .any(|tag| REPOS_AND_IMAGES.iter().any(|im| tag.contains(im)))
-                {
-                    tracing::trace!(image = ?docker_image.repo_tags, "Looking at image..");
-                    let image = docker
-                        .images()
-                        .get(&docker_image.id)
-                        .inspect()
-                        .await
-                        .unwrap();
-                    let image_tags = image.repo_tags.unwrap_or_default();
-
-                    let version: Option<VersionedImage> =
-                        image_tags.iter().fold(None, |img, tag| {
-                            let result = if tag.ends_with(LATEST) {
-                                let (name, original_tag) =
-                                    tag.split_once(':').expect("a valid Docker image name");
-                                Some((LATEST, name, original_tag))
-                            } else if let Some(cap) = version_re.captures(tag) {
-                                if let Some(version) = cap.get(0).map(|m| m.as_str()) {
-                                    let (name, original_tag) =
-                                        tag.split_once(':').expect("a valid Docker image name");
-                                    Some((version, name, original_tag))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            };
-
-                            let Some((version, name, original_tag)) = result else {
-                                return img;
-                            };
-                            match img {
-                                Some(mut a) => {
-                                    a.aliases.push(name);
-                                    Some(a)
-                                }
-                                None => Some(VersionedImage {
-                                    version,
-                                    name,
-                                    aliases: vec![],
-                                    id: docker_image.id.clone(),
-                                    original_tag,
-                                    resolved_version: semver::Version::parse(version).ok(),
-                                }),
-                            }
-                        });
-
-                    if let Some(version_info) = version {
-                        tracing::trace!(
-                            name = ?version_info.name,
-                            version = ?version_info.version,
-                            resolved_version = ?version_info.resolved_version,
-                            original_tag = ?version_info.original_tag,
-                            aliases = ?version_info.aliases,
-                            "parsed local image"
-                        );
-
-                        local_image_stats
-                            .entry(version_info.name.to_owned())
-                            .or_default()
-                            .push(version_info.version.to_owned());
-                    }
-                }
-            }
-            println!("Available local Merigo related images are:\n{local_image_stats:#?}");
-        }
         Some(Commands::Clean { always_yes }) => {
             // TODO: Also remove the msde_dir if set
             println!("About to remove {:?}", ctx.config_dir);
@@ -778,6 +667,118 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Log { target }) => {
             target.attach(&docker).await?;
+        }
+        None => {
+            tracing::trace!("No subcommand was passed, starting diagnostic..");
+            let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
+
+            let mut sys = System::new_all();
+
+            sys.refresh_all();
+
+            println!("System:");
+            println!("total memory  : {} bytes", sys.total_memory());
+            println!("used memory   : {} bytes", sys.used_memory());
+            println!("total swap    : {} bytes", sys.total_swap());
+            println!("used swap     : {} bytes", sys.used_swap());
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                use raw_cpuid::CpuId;
+                let cpuid = CpuId::new();
+                if let Some(cpu_info) = cpuid.get_processor_brand_string() {
+                    println!("CPU           : {}", cpu_info.as_str());
+                }
+            }
+            println!("system name   : {}", sysinfo::System::name().unwrap());
+            println!(
+                "kernel version: {}",
+                sysinfo::System::kernel_version().unwrap()
+            );
+            println!(
+                "OS version    : {}",
+                sysinfo::System::long_os_version().unwrap()
+            );
+            println!("host name     : {}", sysinfo::System::host_name().unwrap());
+            println!("CPU arch      : {}", sysinfo::System::cpu_arch().unwrap());
+            println!(
+                "Docker version: {}",
+                docker.version().await.unwrap().version.unwrap()
+            );
+
+            let opts = docker_api::opts::ImageListOpts::default();
+            let docker_images = docker.images().list(&opts).await?;
+            let mut local_image_stats: HashMap<String, Vec<String>> = HashMap::new();
+
+            for docker_image in &docker_images {
+                if docker_image
+                    .repo_tags
+                    .iter()
+                    .any(|tag| REPOS_AND_IMAGES.iter().any(|im| tag.contains(im)))
+                {
+                    tracing::trace!(image = ?docker_image.repo_tags, "Looking at image..");
+                    let image = docker
+                        .images()
+                        .get(&docker_image.id)
+                        .inspect()
+                        .await
+                        .unwrap();
+                    let image_tags = image.repo_tags.unwrap_or_default();
+
+                    let version: Option<VersionedImage> =
+                        image_tags.iter().fold(None, |img, tag| {
+                            let result = if tag.ends_with(LATEST) {
+                                let (name, original_tag) =
+                                    tag.split_once(':').expect("a valid Docker image name");
+                                Some((LATEST, name, original_tag))
+                            } else if let Some(cap) = version_re.captures(tag) {
+                                if let Some(version) = cap.get(0).map(|m| m.as_str()) {
+                                    let (name, original_tag) =
+                                        tag.split_once(':').expect("a valid Docker image name");
+                                    Some((version, name, original_tag))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            let Some((version, name, original_tag)) = result else {
+                                return img;
+                            };
+                            match img {
+                                Some(mut a) => {
+                                    a.aliases.push(name);
+                                    Some(a)
+                                }
+                                None => Some(VersionedImage {
+                                    version,
+                                    name,
+                                    aliases: vec![],
+                                    id: docker_image.id.clone(),
+                                    original_tag,
+                                    resolved_version: semver::Version::parse(version).ok(),
+                                }),
+                            }
+                        });
+
+                    if let Some(version_info) = version {
+                        tracing::trace!(
+                            name = ?version_info.name,
+                            version = ?version_info.version,
+                            resolved_version = ?version_info.resolved_version,
+                            original_tag = ?version_info.original_tag,
+                            aliases = ?version_info.aliases,
+                            "parsed local image"
+                        );
+
+                        local_image_stats
+                            .entry(version_info.name.to_owned())
+                            .or_default()
+                            .push(version_info.version.to_owned());
+                    }
+                }
+            }
+            println!("Available local Merigo related images are:\n{local_image_stats:#?}");
         }
         _ => {
             tracing::debug!("not now..");
@@ -1017,17 +1018,14 @@ enum Web3Kind {
 
 impl Target {
     async fn attach(&self, docker: &Docker) -> anyhow::Result<()> {
-        let id = self.get_id(&docker).await?;
+        let id = self.get_id(docker).await?;
 
         let container = docker.containers().get(id);
 
         let mut multiplexer = container.attach().await?;
         while let Some(chunk) = multiplexer.next().await {
-            match chunk {
-                Ok(TtyChunk::StdOut(chunk) | TtyChunk::StdErr(chunk)) => {
-                    print!("{}", String::from_utf8_lossy(&chunk));
-                }
-                _ => {}
+            if let Ok(TtyChunk::StdOut(chunk) | TtyChunk::StdErr(chunk)) = chunk {
+                print!("{}", String::from_utf8_lossy(&chunk));
             }
         }
         Ok(())

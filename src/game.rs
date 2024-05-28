@@ -205,7 +205,7 @@ fn strip_once_chunked(s: &str, chr: char, chunk: usize) -> &str {
     // Any other non-first chunk will have an extra overlapping character, since Elixir ranges are *inclusive*.
     // Strip that off.
     lower = if s.starts_with(chr) { lower + 1 } else { lower };
-    return &s[lower..upper];
+    &s[lower..upper]
 }
 
 pub async fn sync_stage_with_ids<'a>(
@@ -428,7 +428,7 @@ pub async fn import_games(ctx: &Context, docker: Docker, quiet: bool) -> anyhow:
     // also TODO: refactor to use well-defined functions
     let pb = progress_spinner(quiet);
     pb.set_message("🔍 Discovering stages..");
-    let local = parse_package_local_stages_file(&ctx)?;
+    let local = parse_package_local_stages_file(ctx)?;
     let remote = get_msde_config(docker.clone()).await?;
     let merged_config = merge_stages(local, remote);
     pb.set_message("📥 Importing stages..");

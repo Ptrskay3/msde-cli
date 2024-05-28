@@ -1,12 +1,19 @@
 use std::{
     collections::HashMap,
     future::Future,
+    io::Read,
     path::{Path, PathBuf},
     process::Stdio,
 };
 
-use crate::env::Feature;
+use crate::{env::Feature, game::rpc};
 use anyhow::Context as _;
+use docker_api::{
+    opts::{ContainerRemoveOpts, ExecCreateOpts},
+    Docker, Exec,
+};
+
+use futures::{StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use serde::{Deserialize, Serialize};
@@ -478,5 +485,214 @@ pub async fn wait_with_timeout(docker: &docker_api::Docker, quiet: bool) -> anyh
             }
         }
     }
+    Ok(())
+}
+
+pub async fn web3_stop_consumers(docker: &Docker) -> anyhow::Result<()> {
+    let consumer_events = String::from("consumer_events");
+    let containers = docker
+        .containers()
+        .list(&Default::default())
+        .await?
+        .into_iter()
+        .filter(|container| {
+            container
+                .names
+                .iter()
+                .any(|name| name.contains(&consumer_events))
+        })
+        .collect::<Vec<_>>();
+
+    for container in containers {
+        if let Some(id) = container.id {
+            docker
+                .containers()
+                .get(&id)
+                .remove(
+                    &ContainerRemoveOpts::builder()
+                        .force(true)
+                        .volumes(true)
+                        .build(),
+                )
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn clean_otel_volumes(docker: &Docker) -> anyhow::Result<()> {
+    const VOLUMES_TO_CLEAR: [&str; 4] = [
+        "docker_esdata01-vm-dev",
+        "docker_kibanadata-vm-dev",
+        "docker_msde-log-dev",
+        "docker_logstash-vm-dev",
+    ];
+
+    for volume_name in &VOLUMES_TO_CLEAR {
+        if let Err(e) = docker.volumes().get(volume_name.to_owned()).delete().await {
+            eprintln!("Failed to remove volume {}: {}", volume_name, e);
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_command_in_container(
+    docker: Docker,
+    container: &str,
+    cmd: &[&str],
+) -> anyhow::Result<()> {
+    let containers = running_containers(&docker).await?;
+    let id = containers
+        .get(container)
+        .with_context(|| format!("{:?} is not running", container))?;
+
+    let opts = ExecCreateOpts::builder()
+        .command(cmd)
+        .attach_stdout(false)
+        .tty(true)
+        .build();
+
+    let exec = Exec::create(docker, id, &opts).await?;
+
+    let mut stream = exec.start(&Default::default()).await?;
+
+    while let Some(Ok(_)) = stream.next().await {}
+
+    Ok(())
+}
+
+pub async fn web3_patch(docker: Docker) -> anyhow::Result<()> {
+    let reg_web3 = [
+        "curl",
+        "-X",
+        "PUT",
+        "-d",
+        r#"{"ID": "web3_services", "Name": "web3_services", "Address": "172.99.0.7"}"#,
+        "http://172.99.0.2:8500/v1/agent/service/register",
+    ];
+    let unreg = [
+        "curl",
+        "-X",
+        "PUT",
+        "http://172.99.0.2:8500/v1/agent/service/deregister/msde_game:msde@172.99.0.5",
+    ];
+    let reg_msde = [
+        "curl",
+        "-X",
+        "PUT",
+        "-d",
+        r#"{"ID": "msde_game", "Name": "msde_game", "Address": "172.99.0.5"}"#,
+        "http://172.99.0.2:8500/v1/agent/service/register",
+    ];
+
+    let container_name = "web3-vm-dev";
+
+    run_command_in_container(docker.clone(), container_name, &reg_web3).await?;
+    // FIXME: original did unreg 3 times
+    run_command_in_container(docker.clone(), container_name, &unreg).await?;
+    run_command_in_container(docker, container_name, &reg_msde).await?;
+
+    Ok(())
+}
+
+pub async fn init_grafana(docker: Docker) -> anyhow::Result<()> {
+    run_command_in_container(
+        docker,
+        "grafana-vm-dev",
+        &["bash", "/usr/local/grafana/init.sh"],
+    )
+    .await?;
+    Ok(())
+}
+
+pub async fn rewrite_sysconfig(
+    docker: Docker,
+    features: &[Feature],
+    vsn: &str,
+) -> anyhow::Result<()> {
+    let container_name = "msde-vm-dev";
+    let container_file_path = format!("/usr/local/bin/merigo/msde/releases/{}/sys.config", vsn);
+
+    // TODO: This is doing more work than it needs to for getting the container id..
+    let containers = running_containers(&docker).await?;
+    let id = containers
+        .get(container_name)
+        .with_context(|| format!("{} is not running", container_name))?;
+
+    let bytes = docker
+        .containers()
+        .get(id)
+        .copy_from(Path::new(&container_file_path))
+        .try_concat()
+        .await?;
+
+    let mut archive = tar::Archive::new(&bytes[..]);
+    let mut sys_config = archive
+        .entries()
+        .context("Failed to iterate archive")?
+        .next()
+        .context("Failed to get sys.config file")??;
+    let mut buffer = String::new();
+    let _bytes_read = sys_config.read_to_string(&mut buffer)?;
+
+    if !features.contains(&Feature::OTEL) {
+        buffer = buffer.replace("{traces_exporter,otlp}", "{traces_exporter,none}");
+    } else {
+        buffer = buffer.replace("{traces_exporter,none}", "{traces_exporter,otlp}");
+    }
+
+    if !features.contains(&Feature::Metrics) && !features.contains(&Feature::OTEL) {
+        buffer = buffer.replace("{stats,[{enable,true}]}", "{stats,[{enable,false}]}");
+    } else {
+        buffer = buffer.replace("{stats,[{enable,false}]}", "{stats,[{enable,true}]}");
+    }
+
+    if !features.contains(&Feature::Web3) {
+        buffer = buffer.replace(
+            "{evmlistener,[{enable,true}]}",
+            "{evmlistener,[{enable,false}]}",
+        );
+    } else {
+        buffer = buffer.replace(
+            "{evmlistener,[{enable,false}]}",
+            "{evmlistener,[{enable,true}]}",
+        );
+    }
+
+    if let Err(e) = docker
+        .containers()
+        .get(id)
+        .copy_file_into(container_file_path, buffer.as_bytes())
+        .await
+    {
+        eprintln!("Error copying back sys.config file: {e}")
+    }
+
+    let reload_config_cmd = [
+        "/bin/bash",
+        "-c",
+        "/usr/local/bin/merigo/msde/bin/msde reload_config",
+    ];
+    run_command_in_container(docker.clone(), container_name, &reload_config_cmd).await?;
+
+    if !features.contains(&Feature::OTEL) {
+        disable_otel(docker).await?;
+    }
+
+    Ok(())
+}
+
+async fn disable_otel(docker: Docker) -> anyhow::Result<()> {
+    rpc(
+        docker,
+        r#"require Logger;
+             Logger.warn("[OTEL] OpenTelemetry is disabled, killing related applications.") ;
+             defmodule KO, do: def kill_otel(), do: (Application.stop(:opentelemetry_exporter) ; Application.stop(:opentelemetry_cowboy) ; Application.stop(:opentelemetry)) ;
+             :rpc.multicall(Sys.Cluster.msdeNodes(), KO, :kill_otel, []) ;
+             Logger.warn("[OTEL] Done. If you need OpenTelemetry, rerun with the otel feature enabled.")
+          "#,
+    ).await?;
     Ok(())
 }

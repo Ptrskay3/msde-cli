@@ -98,6 +98,61 @@ pub enum Feature {
     Bot = 4,
 }
 
+impl Feature {
+    pub fn from_primitive(primitive: usize) -> anyhow::Result<Self> {
+        match primitive {
+            0 => Ok(Self::Metrics),
+            1 => Ok(Self::OTEL),
+            2 => Ok(Self::Web3),
+            3 => Ok(Self::Bot),
+            _ => anyhow::bail!("Invalid primitive, failed to convert integer to Feature."),
+        }
+    }
+
+    // TODO: Most of this depend on STACK_VERSION. Probably we should parse it, for now let's just hardcode.
+    pub fn required_images_and_tags(&self) -> Vec<(String, String)> {
+        match self {
+            Feature::Metrics => {
+                vec![(String::from("prom/prometheus"), String::from("v2.45.0"))]
+            }
+            Feature::OTEL => {
+                vec![
+                    (
+                        String::from("otel/opentelemetry-collector-contrib"),
+                        String::from("0.97.0"),
+                    ),
+                    (
+                        String::from("docker.elastic.co/apm/apm-server"),
+                        String::from("8.7.1"),
+                    ),
+                    (
+                        String::from("docker.elastic.co/elasticsearch/elasticsearch"),
+                        String::from("8.7.1"),
+                    ),
+                    (
+                        String::from("docker.elastic.co/kibana/kibana"),
+                        String::from("8.7.1"),
+                    ),
+                    (
+                        String::from("docker.elastic.co/beats/filebeat"),
+                        String::from("8.7.1"),
+                    ),
+                    (
+                        String::from("docker.elastic.co/logstash/logstash"),
+                        String::from("8.7.1"),
+                    ),
+                ]
+            }
+            // TODO: These have internal image components that require auth.
+            Feature::Web3 => vec![(
+                String::from("softwaremill/elasticmq"),
+                String::from("latest"),
+            )],
+            Feature::Bot => vec![],
+        }
+    }
+}
+
 #[derive(
     serde::Deserialize,
     serde::Serialize,

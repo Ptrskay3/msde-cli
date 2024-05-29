@@ -10,6 +10,7 @@ use anyhow::Context;
 use clap::ValueEnum;
 use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::{generate, shells::Shell};
+use dialoguer::Confirm;
 use dialoguer::Input;
 // May work better!
 // https://github.com/fussybeaver/bollard
@@ -23,6 +24,7 @@ use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use msde_cli::compose::running_containers;
 use msde_cli::compose::Pipeline;
+use msde_cli::env::Feature;
 use msde_cli::env::PackageLocalConfig;
 use msde_cli::game::import_games;
 use msde_cli::init::ensure_valid_project_path;
@@ -483,7 +485,7 @@ async fn main() -> anyhow::Result<()> {
             for (image, tag) in get_images_and_tags(&targets) {
                 let pb = m.add(progress_bar());
 
-                tasks.push(pull(&docker, (image, tag), &credentials, pb));
+                tasks.push(pull(&docker, (image, tag), Some(&credentials), pb));
             }
             let outcome = futures::future::try_join_all(tasks).await.map_err(|e| {
                 m.clear().unwrap();
@@ -560,7 +562,11 @@ async fn main() -> anyhow::Result<()> {
             };
             Pipeline::down_all(&docker, msde_dir, timeout).await?;
         }
-        Some(Commands::Init { path, force }) => {
+        Some(Commands::Init {
+            path,
+            force,
+            pull_images,
+        }) => {
             // TODO: On Windows suggest to use the /home/.. directory instead of /mnt/c, since many things go wrong if using the Windows fs.
             // FIXME: bug: on Windows, if .msde directory doesnt exist and we just accept the default, it doesn't create the config.
             // TODO: integrate login, integrate BEAM file stuff.
@@ -585,7 +591,57 @@ async fn main() -> anyhow::Result<()> {
             })?;
             ctx.write_config(target.canonicalize().unwrap())?;
             ctx.write_package_local_config(self_version)?;
+            let should_pull = if pull_images {
+                true
+            } else {
+                Confirm::with_theme(&theme)
+                    .with_prompt("It's recommended to pull all Docker images to avoid slow cold starts. Do you wish to do it now?")
+                    .interact()
+                    .unwrap()
+            };
             tracing::info!(path = %target.display(), "Successfully initialized project at");
+            // TODO: provide the --features arg to avoid the prompt.
+            if should_pull {
+                let mut images_and_tags = vec![
+                    (String::from("postgres"), String::from("13")),
+                    (String::from("dpage/pgadmin4"), String::from("latest")),
+                    (String::from("hashicorp/consul"), String::from("latest")),
+                    (String::from("redis"), String::from("6.2")),
+                ];
+                let selection = dialoguer::MultiSelect::new()
+                    .with_prompt("Which features do you wish to use? Use the arrow keys to move, Space to select and Enter to confirm.")
+                    // Note: Do not change the order of these, as they correspond to the `Feature` enum.
+                    .items(&["Metrics", "OTEL", "Web3", "Bot"])
+                    .defaults(&[true, false, true, false])
+                    .interact()
+                    .unwrap();
+                let extra_images_from_features = selection
+                    .into_iter()
+                    .flat_map(Feature::from_primitive)
+                    .flat_map(|feature| feature.required_images_and_tags())
+                    .collect::<Vec<(String, String)>>();
+
+                images_and_tags.extend_from_slice(&extra_images_from_features[..]);
+
+                let m = indicatif::MultiProgress::new();
+                let mut tasks = vec![];
+                for (image, tag) in images_and_tags {
+                    let pb = m.add(progress_bar());
+
+                    tasks.push(pull(&docker, (image, tag), None, pb));
+                }
+                let outcome = futures::future::try_join_all(tasks).await.map_err(|e| {
+                    m.clear().unwrap();
+                    e
+                })?;
+                m.clear().unwrap();
+                if outcome.iter().all(|x| *x) {
+                    tracing::info!("All targets pulled!")
+                } else {
+                    tracing::error!("Error pulling some of the images. Check errors above.");
+                    std::process::exit(-1);
+                }
+            }
         }
         Some(Commands::UpgradeProject { path }) => {
             // Plan:
@@ -936,6 +992,9 @@ enum Commands {
 
         #[arg(long, action = ArgAction::SetTrue)]
         force: bool,
+
+        #[arg(short, long, action = ArgAction::SetTrue)]
+        pull_images: bool,
     },
     /// Run a command in the target service.
     Exec {
@@ -1142,19 +1201,21 @@ fn handle_yes_no_prompt() -> bool {
 async fn pull(
     docker: &Docker,
     (image, tag): (String, String),
-    credentials: &SecretCredentials,
+    credentials: Option<&SecretCredentials>,
     pb: ProgressBar,
 ) -> anyhow::Result<bool> {
     let mut errored = false;
     let opts = docker_api::opts::PullOpts::builder()
         .image(&image)
         .tag(&tag)
-        .auth(
+        .auth(if let Some(creds) = credentials {
             docker_api::opts::RegistryAuth::builder()
                 .username(USER)
-                .password(credentials.pull_key.expose_secret())
-                .build(),
-        )
+                .password(creds.pull_key.expose_secret())
+                .build()
+        } else {
+            docker_api::opts::RegistryAuth::builder().build()
+        })
         .build();
 
     let images = docker.images();

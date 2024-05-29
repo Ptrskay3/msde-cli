@@ -4,6 +4,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
 
 use crate::{env::Feature, game::rpc};
@@ -132,7 +133,11 @@ impl Compose {
 pub struct Pipeline;
 
 impl Pipeline {
-    pub async fn down_all<P: AsRef<Path>>(msde_dir: P, timeout: u64) -> anyhow::Result<()> {
+    pub async fn down_all<P: AsRef<Path>>(
+        docker: &Docker,
+        msde_dir: P,
+        timeout: u64,
+    ) -> anyhow::Result<()> {
         let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
             .unwrap()
             .tick_strings(&[
@@ -150,6 +155,7 @@ impl Pipeline {
             exc = child.wait() => {
                 match exc {
                     Ok(status) if status.success() => {
+                        clean_otel_volumes(docker).await?;
                         pb.finish_with_message("✅ All services stopped.")
                     },
                     Ok(status) => {
@@ -193,6 +199,7 @@ impl Pipeline {
     pub async fn from_features<P: AsRef<Path>, F: Future<Output = anyhow::Result<()>>>(
         features: &mut [Feature],
         msde_dir: P,
+        vsn: &str,
         timeout: u64,
         docker: &docker_api::Docker,
         quiet: bool,
@@ -278,6 +285,33 @@ impl Pipeline {
             drop(stdin);
             wait_child_with_timeout(child, &pb, timeout, msde_dir, "MSDE").await?;
         }
+        pb.set_message("🪝 Registering post-init hooks..");
+        if features.contains(&Feature::Metrics) {
+            init_grafana(docker.clone())
+                .await
+                .context("Failed to run grafana init script")?;
+        }
+        if features.contains(&Feature::Web3) {
+            web3_patch(docker.clone())
+                .await
+                .context("Failed to patch Web3")?;
+        }
+
+        rewrite_sysconfig(docker.clone(), &features, vsn)
+            .await
+            .context("Failed to rewrite sys.config")?;
+        if !features.contains(&Feature::OTEL) {
+            // Have to delay this, since the node may be down at this point of time.
+            let docker = docker.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(8)).await;
+                if let Err(e) = disable_otel(docker).await {
+                    eprintln!("Failed to disable OTEL in MSDE: {e}");
+                }
+            });
+        }
+        pb.finish_with_message("✅ Post-init hooks.");
+
         if let Some(attach_future) = attach_future {
             pb.set_draw_target(ProgressDrawTarget::hidden());
             tracing::info!("Attaching to MSDE logs..");
@@ -587,7 +621,7 @@ pub async fn web3_patch(docker: Docker) -> anyhow::Result<()> {
         "http://172.99.0.2:8500/v1/agent/service/register",
     ];
 
-    let container_name = "web3-vm-dev";
+    let container_name = "/web3-vm-dev";
 
     run_command_in_container(docker.clone(), container_name, &reg_web3).await?;
     // FIXME: original did unreg 3 times
@@ -600,7 +634,7 @@ pub async fn web3_patch(docker: Docker) -> anyhow::Result<()> {
 pub async fn init_grafana(docker: Docker) -> anyhow::Result<()> {
     run_command_in_container(
         docker,
-        "grafana-vm-dev",
+        "/grafana-vm-dev",
         &["bash", "/usr/local/grafana/init.sh"],
     )
     .await?;
@@ -612,7 +646,7 @@ pub async fn rewrite_sysconfig(
     features: &[Feature],
     vsn: &str,
 ) -> anyhow::Result<()> {
-    let container_name = "msde-vm-dev";
+    let container_name = "/msde-vm-dev";
     let container_file_path = format!("/usr/local/bin/merigo/msde/releases/{}/sys.config", vsn);
 
     // TODO: This is doing more work than it needs to for getting the container id..
@@ -676,10 +710,6 @@ pub async fn rewrite_sysconfig(
         "/usr/local/bin/merigo/msde/bin/msde reload_config",
     ];
     run_command_in_container(docker.clone(), container_name, &reload_config_cmd).await?;
-
-    if !features.contains(&Feature::OTEL) {
-        disable_otel(docker).await?;
-    }
 
     Ok(())
 }

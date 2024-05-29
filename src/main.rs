@@ -541,6 +541,8 @@ async fn main() -> anyhow::Result<()> {
             Pipeline::from_features(
                 features.as_mut_slice(),
                 msde_dir,
+                // TODO: read this from the package local metadata.json.
+                "3.10.0",
                 timeout,
                 &docker,
                 quiet,
@@ -553,7 +555,7 @@ async fn main() -> anyhow::Result<()> {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            Pipeline::down_all(msde_dir, timeout).await?;
+            Pipeline::down_all(&docker, msde_dir, timeout).await?;
         }
         Some(Commands::Init { path, force }) => {
             // TODO: On Windows suggest to use the /home/.. directory instead of /mnt/c, since many things go wrong if using the Windows fs.
@@ -873,7 +875,7 @@ enum Commands {
         // We may use humantime::Duration like so:
         ///   #[clap(default_value = "100s")]
         ///   interval: humantime::Duration,
-        #[arg(short, long, default_value_t = 100)]
+        #[arg(short, long, default_value_t = 300)]
         timeout: u64,
 
         #[arg(short, long, action = ArgAction::SetTrue)]
@@ -901,7 +903,7 @@ enum Commands {
     Stop,
     Start,
     Down {
-        #[arg(short, long, default_value_t = 100)]
+        #[arg(short, long, default_value_t = 300)]
         timeout: u64,
     },
     /// Open the logs of the target service.

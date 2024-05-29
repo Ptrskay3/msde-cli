@@ -156,6 +156,7 @@ impl Pipeline {
                 match exc {
                     Ok(status) if status.success() => {
                         clean_otel_volumes(docker).await?;
+                        web3_stop_consumers(docker).await?;
                         pb.finish_with_message("✅ All services stopped.")
                     },
                     Ok(status) => {
@@ -196,6 +197,7 @@ impl Pipeline {
         Ok(())
     }
 
+    // FIXME: Too many arguments
     pub async fn from_features<P: AsRef<Path>, F: Future<Output = anyhow::Result<()>>>(
         features: &mut [Feature],
         msde_dir: P,
@@ -297,20 +299,21 @@ impl Pipeline {
                 .context("Failed to patch Web3")?;
         }
 
-        rewrite_sysconfig(docker.clone(), &features, vsn)
+        rewrite_sysconfig(docker.clone(), features, vsn)
             .await
             .context("Failed to rewrite sys.config")?;
+        let mut handle = None;
         if !features.contains(&Feature::OTEL) {
             // Have to delay this, since the node may be down at this point of time.
             let docker = docker.clone();
-            tokio::spawn(async move {
+            handle = Some(tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(8)).await;
                 if let Err(e) = disable_otel(docker).await {
                     eprintln!("Failed to disable OTEL in MSDE: {e}");
                 }
-            });
+            }));
         }
-        pb.finish_with_message("✅ Post-init hooks.");
+        pb.finish_with_message("✅ Registered post-init hooks.");
 
         if let Some(attach_future) = attach_future {
             pb.set_draw_target(ProgressDrawTarget::hidden());
@@ -322,6 +325,12 @@ impl Pipeline {
         } else {
             wait_with_timeout(docker, quiet).await?;
         }
+        pb.set_message("Waiting for post-init hooks to finish..");
+        // If we don't attach, we'll need to wait for this delayed call to finish before exiting.
+        if let Some(handle) = handle {
+            handle.await?;
+        }
+        pb.finish_with_message("✅ MSDE is ready.");
         Ok(())
     }
 }
@@ -565,7 +574,7 @@ pub async fn clean_otel_volumes(docker: &Docker) -> anyhow::Result<()> {
 
     for volume_name in &VOLUMES_TO_CLEAR {
         if let Err(e) = docker.volumes().get(volume_name.to_owned()).delete().await {
-            eprintln!("Failed to remove volume {}: {}", volume_name, e);
+            tracing::debug!("Failed to remove volume {}: {}", volume_name, e);
         }
     }
 

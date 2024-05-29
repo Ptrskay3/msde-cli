@@ -533,6 +533,9 @@ async fn main() -> anyhow::Result<()> {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
+            let Some(metadata) = ctx.run_project_checks(self_version)? else {
+                anyhow::bail!("No active project found");
+            };
             let attach_future = if attach {
                 Some(Target::Msde { version: None }.attach(&docker))
             } else {
@@ -541,8 +544,8 @@ async fn main() -> anyhow::Result<()> {
             Pipeline::from_features(
                 features.as_mut_slice(),
                 msde_dir,
-                // TODO: read this from the package local metadata.json.
-                "3.10.0",
+                // FIXME: Why `target_msde_version` is an Option? Probably it shouldn't be.
+                metadata.target_msde_version.unwrap().to_string().as_str(),
                 timeout,
                 &docker,
                 quiet,

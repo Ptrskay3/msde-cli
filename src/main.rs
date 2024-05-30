@@ -28,6 +28,7 @@ use msde_cli::env::Feature;
 use msde_cli::env::PackageLocalConfig;
 use msde_cli::game::import_games;
 use msde_cli::init::ensure_valid_project_path;
+use msde_cli::utils;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 use sysinfo::System;
@@ -366,7 +367,9 @@ async fn main() -> anyhow::Result<()> {
                 ctx.msde_dir
                     .map(|msde_dir| msde_dir.join("merigo_extension"))
             }) else {
-                anyhow::bail!("No path found to merigo extension. Please pass the --path argument.")
+                anyhow::bail!(
+                    "No path found to merigo extension. Please specify the --path argument."
+                )
             };
             msde_cli::updater::verify_beam_files(version, path)?;
             tracing::info!("BEAM files verified.");
@@ -376,7 +379,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Versions { target }) => {
             let file = File::open(".msde/index.json")
-                .context("local cache not found, please omit the `--no-build-cache` flag")?;
+                .context("local cache not found, please omit the `--no-cache` flag")?;
             let reader = BufReader::new(file);
             let index: Index = serde_json::from_reader(reader)?;
 
@@ -544,7 +547,7 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("project must be set")
             };
             let Some(metadata) = ctx.run_project_checks(self_version)? else {
-                anyhow::bail!("No active project found");
+                anyhow::bail!("No valid active project found");
             };
             let attach_future = if attach {
                 Some(Target::Msde { version: None }.attach(&docker))
@@ -574,13 +577,13 @@ async fn main() -> anyhow::Result<()> {
             path,
             force,
             pull_images,
+            features,
         }) => {
             // TODO: On Windows suggest to use the /home/.. directory instead of /mnt/c, since many things go wrong if using the Windows fs.
-            // FIXME: bug: on Windows, if .msde directory doesnt exist and we just accept the default, it doesn't create the config.
             // TODO: integrate login, integrate BEAM file stuff.
             // Prompt whether example games should be included
             // Message to put their existing games inside a folder..
-            let target = path.unwrap_or_else(|| {
+            let mut target = path.unwrap_or_else(|| {
                 let res: String = Input::with_theme(&theme)
                     .with_prompt("Where should the project be initialized?\nInput a directory, or press enter to accept the default.")
                     .default(ctx.home.join("merigo").to_string_lossy().into_owned())
@@ -588,6 +591,18 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap();
                 PathBuf::from(res)
             });
+
+            if utils::wsl() {
+                if target.canonicalize().unwrap().starts_with("/mnt/") {
+                    let res: String = Input::with_theme(&theme)
+                        .with_prompt("You seem to be using the Windows filesystem.\nIt's highly recommended to use the WSL filesystem, otherwise the package will not work correctly.\nInput a directory, or press enter to accept the default.")
+                        .default(ctx.home.join("merigo").to_string_lossy().into_owned())
+                        .interact_text()
+                        .unwrap();
+                    target = PathBuf::from(res);
+                }
+            }
+
             msde_cli::init::ensure_valid_project_path(&target, force)?;
             ctx.set_project_path(&target);
             let mut archive = tar::Archive::new(GzDecoder::new(msde_cli::PACKAGE));
@@ -616,16 +631,22 @@ async fn main() -> anyhow::Result<()> {
                     (String::from("hashicorp/consul"), String::from("latest")),
                     (String::from("redis"), String::from("6.2")),
                 ];
-                let selection = dialoguer::MultiSelect::new()
-                    .with_prompt("Which features do you wish to use? Use the arrow keys to move, Space to select and Enter to confirm.")
-                    // Note: Do not change the order of these, as the ordering corresponds to the `Feature` enum.
-                    .items(&["Metrics", "OTEL", "Web3", "Bot"])
-                    .defaults(&[true, false, true, false])
-                    .interact()
-                    .unwrap();
-                let extra_images_from_features = selection
-                    .into_iter()
-                    .flat_map(Feature::from_primitive)
+                let features = features.unwrap_or_else(|| {
+                    let selection = dialoguer::MultiSelect::new()
+                        .with_prompt("Which features do you wish to use? Use the arrow keys to move, Space to select and Enter to confirm.")
+                        // Note: Do not change the order of these, as the ordering corresponds to the `Feature` enum.
+                        .items(&["Metrics", "OTEL", "Web3", "Bot"])
+                        .defaults(&[true, false, true, false])
+                        .interact()
+                        .unwrap();
+                    selection
+                        .into_iter()
+                        .flat_map(Feature::from_primitive)
+                        .collect::<Vec<Feature>>()
+            });
+
+                let extra_images_from_features = features
+                    .iter()
                     .flat_map(|feature| feature.required_images_and_tags())
                     .collect::<Vec<(String, String)>>();
 
@@ -649,6 +670,8 @@ async fn main() -> anyhow::Result<()> {
                     tracing::error!("Error pulling some of the images. Check errors above.");
                     std::process::exit(-1);
                 }
+            } else if features.is_some() {
+                tracing::warn!("Passing --features without --pull-images has no effect.")
             }
         }
         Some(Commands::UpgradeProject { path }) => {
@@ -1003,6 +1026,9 @@ enum Commands {
 
         #[arg(short, long, action = ArgAction::SetTrue)]
         pull_images: bool,
+
+        #[arg(short, long, value_delimiter = ',', num_args = 0..)]
+        features: Option<Vec<msde_cli::env::Feature>>,
     },
     /// Run a command in the target service.
     Exec {

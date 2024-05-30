@@ -44,6 +44,7 @@ uuid = { version = "1.8.0", features = ["v4", "serde"] }
 winnow = "0.6.8"
 backoff = "0.4.0"
 dotenvy = "0.15.7"
+thiserror = "1.0.61"
 
 [build-dependencies]
 flate2 = "1.0"

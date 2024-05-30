@@ -10,4 +10,6 @@ fn main() {
     tar.finish().unwrap();
 
     println!("cargo:rustc-env=COMPRESSED_FILE=../compressed.tar.gz");
+    // TODO: Read this from somewhere visible, like a .env or a version.txt, or get dynamically?
+    println!("cargo:rustc-env=MERIGO_UPSTREAM_VERSION=3.10.0")
 }

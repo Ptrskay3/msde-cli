@@ -1,8 +1,10 @@
 use md5::{Digest, Md5};
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use zip_extensions::*;
+
+use crate::env::Context;
 
 pub fn md5_update_from_dir(directory: &Path, mut hash: Md5) -> io::Result<Md5> {
     assert!(directory.is_dir());
@@ -80,9 +82,15 @@ pub fn verify_beam_files<P: AsRef<Path> + std::fmt::Debug>(
     Ok(())
 }
 
-// TODO: Paths..
 #[tracing::instrument]
-pub async fn update_beam_files(version: semver::Version, no_verify: bool) -> anyhow::Result<()> {
+pub async fn update_beam_files(
+    ctx: &Context,
+    version: semver::Version,
+    no_verify: bool,
+) -> anyhow::Result<()> {
+    let Some(msde_dir) = ctx.msde_dir.as_ref() else {
+        anyhow::bail!("No active project found.");
+    };
     let response = reqwest::get(format!(
         "https://merigo-beam-files.s3.amazonaws.com/{version}/merigo-extension.zip"
     ))
@@ -95,21 +103,22 @@ pub async fn update_beam_files(version: semver::Version, no_verify: bool) -> any
 
     let body = response.bytes().await?;
 
-    let mut tmp_file = File::create("merigo-extension-tmp.zip")?;
+    let mut tmp_file = File::create(msde_dir.join("merigo-extension-tmp.zip"))?;
     io::copy(&mut body.as_ref(), &mut tmp_file)?;
-    let archive_file = PathBuf::from("merigo-extension-tmp.zip");
-    let target_dir = PathBuf::from("./merigo-extension-tmp");
-    tracing::trace!(path = ?target_dir, "extracting zip");
-    zip_extract(&archive_file, &target_dir)?;
+    tracing::trace!(path = ?msde_dir, "extracting zip");
+    zip_extract(
+        &msde_dir.join("merigo-extension-tmp.zip"),
+        &msde_dir.join("merigo-extension-tmp"),
+    )?;
     if !no_verify {
-        verify_beam_files(version, "./merigo-extension-tmp")?;
+        verify_beam_files(version, msde_dir.join("merigo-extension-tmp"))?;
     }
     tracing::trace!("Copying BEAM files to their real destination..");
     // Ignoring the error, because it may not exist.
-    let _ = std::fs::remove_dir_all("./merigo-extension-real");
+    let _ = std::fs::remove_dir_all(msde_dir.join("merigo-extension"));
     fs_extra::move_items(
-        &["./merigo-extension-tmp"],
-        "./merigo-extension-real",
+        &[msde_dir.join("merigo-extension-tmp")],
+        msde_dir.join("merigo-extension"),
         &fs_extra::dir::CopyOptions {
             copy_inside: true,
             ..Default::default()
@@ -117,7 +126,7 @@ pub async fn update_beam_files(version: semver::Version, no_verify: bool) -> any
     )?;
     tracing::trace!("Removing temporal zip.");
 
-    std::fs::remove_file("./merigo-extension-tmp.zip")?;
+    std::fs::remove_file(msde_dir.join("merigo-extension-tmp.zip"))?;
     tracing::trace!("Done.");
     Ok(())
 }

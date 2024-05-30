@@ -33,6 +33,8 @@ use secrecy::Secret;
 use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+const UPSTREAM_MERIGO_VERSION: &str = env!("MERIGO_UPSTREAM_VERSION");
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct MetadataResponse {
     name: String,
@@ -265,9 +267,16 @@ async fn main() -> anyhow::Result<()> {
         ..dialoguer::theme::ColorfulTheme::default()
     };
 
+    let upstream_version = semver::Version::parse(UPSTREAM_MERIGO_VERSION).unwrap();
+
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
     let mut ctx = msde_cli::env::Context::from_env()?;
     tracing::trace!(?ctx, "context");
+
+    if let Some(msde_dir) = ctx.msde_dir.as_ref() {
+        let docker_compose_env = msde_dir.join("./docker/.env");
+        dotenvy::from_path(docker_compose_env).ok();
+    }
 
     let cmd = Command::parse();
     let self_version = <Command as clap::CommandFactory>::command()
@@ -293,7 +302,6 @@ async fn main() -> anyhow::Result<()> {
             }
             (None, Ok(_)) => {}
             (None, _) => {
-                // TODO: If we generate completions, it's very confusing still to see this output on stderr, since it may hide the sudo password prompt..
                 tracing::warn!("The developer package is not yet configured.");
                 tracing::warn!("To configure, you may use the `init` or `set-project` command, or set the project path to the `MERIGO_DEV_PACKAGE_DIR` environment variable.");
                 tracing::warn!("You may also install auto-completions by running:");
@@ -346,20 +354,20 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::UpdateBeamFiles {
             version, no_verify, ..
         }) => {
-            // TODO: Do not hardcode 3.10.0
-            let version = version.unwrap_or_else(|| semver::Version::parse("3.10.0").unwrap());
+            let version = version.unwrap_or(upstream_version);
 
-            msde_cli::updater::update_beam_files(version.clone(), no_verify).await?;
+            msde_cli::updater::update_beam_files(&ctx, version.clone(), no_verify).await?;
             tracing::info!("BEAM files updated to version `{version}`.");
         }
         Some(Commands::VerifyBeamFiles { version, path }) => {
-            // TODO: Do not hardcode these values
-            let version = version.unwrap_or_else(|| semver::Version::parse("3.10.0").unwrap());
-            let path = path.unwrap_or_else(|| {
-                PathBuf::from(
-                    "/home/leehpeter-zengo/work/merigo/docker_dev/package/merigo_extension/priv",
-                )
-            });
+            let version = version.unwrap_or(upstream_version);
+
+            let Some(path) = path.or_else(|| {
+                ctx.msde_dir
+                    .map(|msde_dir| msde_dir.join("merigo_extension"))
+            }) else {
+                anyhow::bail!("No path found to merigo extension. Please pass the --path argument.")
+            };
             msde_cli::updater::verify_beam_files(version, path)?;
             tracing::info!("BEAM files verified.");
         }
@@ -610,7 +618,7 @@ async fn main() -> anyhow::Result<()> {
                 ];
                 let selection = dialoguer::MultiSelect::new()
                     .with_prompt("Which features do you wish to use? Use the arrow keys to move, Space to select and Enter to confirm.")
-                    // Note: Do not change the order of these, as they correspond to the `Feature` enum.
+                    // Note: Do not change the order of these, as the ordering corresponds to the `Feature` enum.
                     .items(&["Metrics", "OTEL", "Web3", "Bot"])
                     .defaults(&[true, false, true, false])
                     .interact()

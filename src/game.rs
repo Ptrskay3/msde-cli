@@ -138,12 +138,11 @@ pub fn process_rpc_output(output: &str) -> String {
         .trim_start_matches(RPC_START_SEQUENCE)
         .trim()
         .chars()
-        // However, JSON should only contain alphanumeric + punctuation, so this solution may be just fine.
+        // JSON should only contain alphanumeric + punctuation, so this solution may be just fine.
         .skip_while(|c| !c.is_ascii_alphanumeric() && !c.is_ascii_punctuation())
         .collect::<String>()
 }
 
-// TODO: implement the chunked mechanism...
 pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<Stages>> {
     let op = rpc(
         docker.clone(),

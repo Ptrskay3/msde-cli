@@ -109,13 +109,14 @@ impl Feature {
         }
     }
 
-    // TODO: Most of this depend on STACK_VERSION. Probably we should parse it, for now let's just hardcode.
     pub fn required_images_and_tags(&self) -> Vec<(String, String)> {
         match self {
             Feature::Metrics => {
                 vec![(String::from("prom/prometheus"), String::from("v2.45.0"))]
             }
             Feature::OTEL => {
+                let stack_version =
+                    std::env::var("STACK_VERSION").unwrap_or_else(|_| String::from("8.7.1"));
                 vec![
                     (
                         String::from("otel/opentelemetry-collector-contrib"),
@@ -123,23 +124,23 @@ impl Feature {
                     ),
                     (
                         String::from("docker.elastic.co/apm/apm-server"),
-                        String::from("8.7.1"),
+                        stack_version.clone(),
                     ),
                     (
                         String::from("docker.elastic.co/elasticsearch/elasticsearch"),
-                        String::from("8.7.1"),
+                        stack_version.clone(),
                     ),
                     (
                         String::from("docker.elastic.co/kibana/kibana"),
-                        String::from("8.7.1"),
+                        stack_version.clone(),
                     ),
                     (
                         String::from("docker.elastic.co/beats/filebeat"),
-                        String::from("8.7.1"),
+                        stack_version.clone(),
                     ),
                     (
                         String::from("docker.elastic.co/logstash/logstash"),
-                        String::from("8.7.1"),
+                        stack_version,
                     ),
                 ]
             }

@@ -308,7 +308,7 @@ async fn main() -> anyhow::Result<()> {
             login(&ctx, ghcr_key, pull_key, file)?;
         }
         Some(Commands::Clean { always_yes }) => {
-            // TODO: Also remove the msde_dir if set
+            // TODO: Also remove the msde_dir if set?
             println!("About to remove {:?}", ctx.config_dir);
 
             let proceed = if always_yes {
@@ -372,7 +372,6 @@ async fn main() -> anyhow::Result<()> {
             no_pull_images,
             features,
         }) => {
-            // TODO: On Windows suggest to use the /home/.. directory instead of /mnt/c, since many things go wrong if using the Windows fs.
             // TODO: integrate login, integrate BEAM file stuff.
             // Prompt whether example games should be included
             // Message to put their existing games inside a folder..

@@ -87,8 +87,6 @@ impl Compose {
             files.extend(&["-f", "-"])
         }
 
-        // TODO: On Windows, current dir doesn't work, because it'll use Windows paths where Unix paths are expected.
-        // We may use `wslpath-rs` (that requires WSL to be installed obviously), or maybe we can just pass `docker compose -f C:\path\to\compose.yml`..
         Command::new("docker")
             .current_dir(msde_dir)
             .stdout(stdout)
@@ -250,8 +248,16 @@ impl Pipeline {
                     file_streamed_stdin: i == last_feature_idx && bot_enabled,
                     build,
                 }),
-                if raw { Stdio::inherit() } else { Stdio::piped() },
-                if raw { Stdio::inherit() } else { Stdio::piped() },
+                if raw {
+                    Stdio::inherit()
+                } else {
+                    Stdio::piped()
+                },
+                if raw {
+                    Stdio::inherit()
+                } else {
+                    Stdio::piped()
+                },
                 Stdio::piped(),
                 &msde_dir,
             )?;
@@ -276,8 +282,16 @@ impl Pipeline {
                     file_streamed_stdin: true,
                     build,
                 }),
-                if raw { Stdio::inherit() } else { Stdio::piped() },
-                if raw { Stdio::inherit() } else { Stdio::piped() },
+                if raw {
+                    Stdio::inherit()
+                } else {
+                    Stdio::piped()
+                },
+                if raw {
+                    Stdio::inherit()
+                } else {
+                    Stdio::piped()
+                },
                 Stdio::piped(),
                 &msde_dir,
             )?;
@@ -428,7 +442,6 @@ pub fn progress_spinner(quiet: bool) -> ProgressBar {
     pb
 }
 
-#[cfg(unix)]
 fn generate_volumes(features: &[Feature], msde_dir: impl AsRef<Path>) -> anyhow::Result<String> {
     let games_dir = msde_dir.as_ref().join("games");
     let samples_dir = msde_dir.as_ref().join("samples");
@@ -447,12 +460,6 @@ fn generate_volumes(features: &[Feature], msde_dir: impl AsRef<Path>) -> anyhow:
         mapping.services.insert("bot-vm-dev", service);
     }
     serde_yaml::to_string(&mapping).map_err(Into::into)
-}
-
-// Probably Windows needs special treatment, so let's just mark this as a todo
-#[cfg(not(unix))]
-fn generate_volumes(features: &[Feature], msde_dir: impl AsRef<Path>) -> anyhow::Result<String> {
-    todo!()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -518,7 +525,6 @@ pub async fn wait_with_timeout(docker: &docker_api::Docker, quiet: bool) -> anyh
     let pb = progress_spinner(quiet);
     pb.set_message("Waiting for MSDE to be healthy..");
     tokio::select! {
-        // TODO: Hardcoded the timeout for now, 60 seconds should be more than enough
         _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
             pb.finish_with_message("❌ MSDE health check timed out.");
         }

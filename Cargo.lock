@@ -1329,7 +1329,6 @@ dependencies = [
  "uuid",
  "webbrowser",
  "winnow",
- "wslpath-rs",
  "zip 2.1.1",
  "zip-extensions",
 ]
@@ -2321,12 +2320,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
 
 [[package]]
-name = "typed-path"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "668404597c2c687647f6f8934f97c280fd500db28557f52b07c56b92d3dc500a"
-
-[[package]]
 name = "typenum"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2811,15 +2804,6 @@ checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "wslpath-rs"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eef843969cafd23881450280329e3d0d84ea6caece3dd34b7b95334d1a97dace"
-dependencies = [
- "typed-path",
 ]
 
 [[package]]

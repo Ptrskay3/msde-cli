@@ -37,6 +37,8 @@ static LOGLEVEL: &str = "msde_cli=trace";
 #[cfg(not(debug_assertions))]
 static LOGLEVEL: &str = "msde_cli=info";
 
+type BoxedAttachFuture = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>>>>;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -364,6 +366,49 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("project must be set")
             };
             Pipeline::down_all(&docker, msde_dir, timeout).await?;
+        }
+        Some(Commands::Run {
+            mut features,
+            timeout,
+            quiet,
+            attach,
+            build,
+            raw,
+        }) => {
+            let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
+                anyhow::bail!("project must be set")
+            };
+            let Some(metadata) = ctx.run_project_checks(self_version)? else {
+                anyhow::bail!("No valid active project found");
+            };
+            let d = docker.clone();
+            let attach_future = if attach {
+                Some(Target::Msde { version: None }.attach(&d))
+            } else {
+                None
+            };
+            Pipeline::from_features(
+                features.as_mut_slice(),
+                msde_dir,
+                metadata.target_msde_version.unwrap().to_string().as_str(),
+                timeout,
+                &docker,
+                quiet,
+                build,
+                Option::<BoxedAttachFuture>::None,
+                raw,
+            )
+            .await?;
+            if let Some(attach_future) = attach_future {
+                if let Err(e) = tokio::try_join!(
+                    attach_future,
+                    import_games(&ctx, docker, quiet || raw || attach)
+                ) {
+                    tracing::error!(error = %e, "Failed to start MSDE");
+                }
+            } else {
+                import_games(&ctx, docker, quiet || raw).await?;
+            }
         }
         Some(Commands::Init {
             path,

@@ -33,7 +33,8 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::ImportGames { .. }
+                Commands::Run { .. }
+                    | Commands::ImportGames { .. }
                     | Commands::Rpc { .. }
                     | Commands::Log { .. }
                     | Commands::Down { .. }
@@ -90,6 +91,7 @@ pub enum Commands {
         /// The name of the profile.
         #[arg(short, long)]
         name: String,
+
         #[arg(short, long, value_delimiter = ',', num_args = 1..)]
         features: Vec<crate::env::Feature>,
     },
@@ -115,9 +117,6 @@ pub enum Commands {
         #[arg(short, long, value_delimiter = ',', num_args = 1..)]
         features: Vec<crate::env::Feature>,
 
-        // We may use humantime::Duration like so:
-        //   #[clap(default_value = "100s")]
-        //   interval: humantime::Duration,
         /// The maximum duration in seconds to wait for services to be healthy before exiting.
         #[arg(short, long, default_value_t = 300)]
         timeout: u64,
@@ -144,17 +143,38 @@ pub enum Commands {
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]
         always_yes: bool,
     },
-    // TODO: implement
-    /// Runs the target service(s), then attaches to its logs
+    /// Runs the target service(s), imports all valid games from the project folder.
+    /// It has the same effect as the `up` and the `import-games` command combined.
     Run {
-        #[command(subcommand)]
-        target: Option<Target>,
+        /// The features to enable for this run.
+        #[arg(short, long, value_delimiter = ',', num_args = 1..)]
+        features: Vec<crate::env::Feature>,
+
+        /// The maximum duration in seconds to wait for services to be healthy before exiting.
+        #[arg(short, long, default_value_t = 300)]
+        timeout: u64,
+
+        /// Do not print anything to the terminal
+        #[arg(short, long, action = ArgAction::SetTrue)]
+        quiet: bool,
+
+        /// After a successful start attach to MSDE container logs.
+        #[arg(long, action = ArgAction::SetTrue)]
+        attach: bool,
+
+        /// (Re)build the services (pass --build to docker compose).
+        #[arg(long, action = ArgAction::SetTrue)]
+        build: bool,
+
+        /// Start all commands in raw mode, meaning all output is transmitted to the calling terminal without changes.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "quiet")]
+        raw: bool,
     },
     Stop,
     Start,
     /// Stop all running services and remove stored game data by cleaning associated Docker volumes.
     Down {
-        /// The maximum wait duration for the down command to finish before exiting with an error.
+        /// The maximum wait duration in seconds for the down command to finish before exiting with an error.
         #[arg(short, long, default_value_t = 300)]
         timeout: u64,
     },

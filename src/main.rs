@@ -542,6 +542,7 @@ async fn main() -> anyhow::Result<()> {
             quiet,
             attach,
             build,
+            raw,
         }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
@@ -564,6 +565,7 @@ async fn main() -> anyhow::Result<()> {
                 quiet,
                 build,
                 attach_future,
+                raw,
             )
             .await?;
         }
@@ -577,6 +579,7 @@ async fn main() -> anyhow::Result<()> {
             path,
             force,
             pull_images,
+            no_pull_images,
             features,
         }) => {
             // TODO: On Windows suggest to use the /home/.. directory instead of /mnt/c, since many things go wrong if using the Windows fs.
@@ -616,14 +619,15 @@ async fn main() -> anyhow::Result<()> {
             ctx.write_package_local_config(self_version)?;
             let should_pull = if pull_images {
                 true
-            } else {
+            } else if !no_pull_images {
                 Confirm::with_theme(&theme)
                     .with_prompt("It's recommended to pull all Docker images to avoid slow cold starts. Do you wish to do it now?")
                     .interact()
                     .unwrap()
+            } else {
+                false
             };
             tracing::info!(path = %target.display(), "Successfully initialized project at");
-            // TODO: provide the --features arg to avoid the prompt.
             if should_pull {
                 let mut images_and_tags = vec![
                     (String::from("postgres"), String::from("13")),
@@ -647,10 +651,9 @@ async fn main() -> anyhow::Result<()> {
 
                 let extra_images_from_features = features
                     .iter()
-                    .flat_map(|feature| feature.required_images_and_tags())
-                    .collect::<Vec<(String, String)>>();
+                    .flat_map(|feature| feature.required_images_and_tags());
 
-                images_and_tags.extend_from_slice(&extra_images_from_features[..]);
+                images_and_tags.extend(extra_images_from_features);
 
                 let m = indicatif::MultiProgress::new();
                 let mut tasks = vec![];
@@ -914,28 +917,35 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Import all games from the working directory.
-    /// TODO: longer description what it does
+    /// Import all games from the project directory. This command will look at your active project path in games/stages.yml,
+    /// and will import all valid games listed there. For more information how it works, see https://docs.merigo.co/getting-started/devpackage#using-config-stages.yml
     ImportGames {
+        /// Don't print output to the terminal.
         #[arg(short, long, action = ArgAction::SetTrue)]
         quiet: bool,
     },
-    /// Call into the MSDE system with an RPC. The services must be running.
+    /// Call into the MSDE system with an RPC. The MSDE service must be running.
     ///
     /// Example:
     ///
     /// > msde-cli rpc 'IO.puts("hello")'
     Rpc {
+        /// The Elixir command to run as a quoted string.
         #[arg(num_args = 1)]
         cmd: String,
     },
+    /// Open the documentation page for this package.
     Docs,
+    /// Show the project status. WIP.
     Status,
+    /// Sets the project path to the given directory. The directory must contain a valid top-level `metadata.json`.
     SetProject {
         #[arg(index = 1)]
         path: Option<PathBuf>,
     },
+    /// Register a new profile for running the developer package.
     AddProfile {
+        /// The name of the profile.
         #[arg(short, long)]
         name: String,
         #[arg(short, long, value_delimiter = ',', num_args = 1..)]
@@ -978,6 +988,10 @@ enum Commands {
         /// (Re)build the services (pass --build to docker compose).
         #[arg(long, action = ArgAction::SetTrue)]
         build: bool,
+
+        /// Start all commands in raw mode, meaning all output is transmitted to the calling terminal without changes.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "quiet")]
+        raw: bool,
     },
     /// Wipe out all config files and folders.
     Clean {
@@ -985,6 +999,7 @@ enum Commands {
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]
         always_yes: bool,
     },
+    // TODO: implement
     /// Runs the target service(s), then attaches to its logs
     Run {
         #[command(subcommand)]
@@ -992,11 +1007,13 @@ enum Commands {
     },
     Stop,
     Start,
+    /// Stop all running services and remove stored game data by cleaning associated Docker volumes.
     Down {
+        /// The maximum wait duration for the down command to finish before exiting with an error.
         #[arg(short, long, default_value_t = 300)]
         timeout: u64,
     },
-    /// Open the logs of the target service.
+    /// Attach the logs of the target service. This command will not display logs from the past.
     Log {
         #[command(subcommand)]
         target: Target,
@@ -1006,7 +1023,8 @@ enum Commands {
         #[command(subcommand)]
         target: Option<Target>,
 
-        // the "version" argument in the other subcommand (kind of confusing)
+        // Note: the "version" argument in the other subcommand (kind of confusing)
+        /// The specific version to pull.
         #[arg(short, long, required_unless_present = "version")]
         version: Option<String>,
     },
@@ -1018,38 +1036,53 @@ enum Commands {
     /// conflicts with an existing file.
     /// For that exact reason a non-empty directory will be rejected, unless the --force flag is present.
     Init {
+        /// The path where to initialize the project.
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
 
+        /// Allows initializing inside non-empty directories.
         #[arg(long, action = ArgAction::SetTrue)]
         force: bool,
 
+        /// Pull the associated images prematurely. Use it with the `--features` flag to specify which features to pull.
         #[arg(short, long, action = ArgAction::SetTrue)]
         pull_images: bool,
 
+        /// Don't pull any associated images prematurely.
+        #[arg(short, long, action = ArgAction::SetTrue)]
+        no_pull_images: bool,
+
+        /// The target features to pull. If no features is required, just pass the empty value like so: `--features `.
         #[arg(short, long, value_delimiter = ',', num_args = 0..)]
         features: Option<Vec<msde_cli::env::Feature>>,
     },
+    // TODO: What is this command?
     /// Run a command in the target service.
     Exec {
+        /// The command to execute.
         cmd: String,
     },
     /// Verify the integrity of BEAM files.
     VerifyBeamFiles {
+        /// The version to verify the BEAM files against.
         #[arg(short, long)]
         version: Option<semver::Version>,
 
+        /// The path where the BEAM files are located. By default, this is the `project_folder/merigo_extension`.
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
     },
     /// Update the BEAM files.
     UpdateBeamFiles {
+        /// The version of the BEAM files to download.
         #[arg(short, long)]
         version: Option<semver::Version>,
 
+        /// The path where the BEAM files should be put. By default, this is the `project_folder/merigo_extension`.
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
 
+        /// Skip verifying the integrity of the BEAM files.
         #[arg(long, action = ArgAction::SetTrue)]
         no_verify: bool,
     },
@@ -1059,6 +1092,7 @@ enum Commands {
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]
         always_yes: bool,
     },
+    // TODO: This is broken if auth is not correct. Also it doesn't really make sense?
     /// Build a cache around all available Merigo Docker images in the remote registry.
     BuildCache {
         /// Specifies the expiration duration of the cache in hours.

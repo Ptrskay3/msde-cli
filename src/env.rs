@@ -9,8 +9,9 @@
 use anyhow::Context as _;
 use clap::ValueEnum;
 use std::{
+    collections::HashMap,
     fs,
-    io::{BufReader, Seek, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 use strum::Display;
@@ -44,31 +45,42 @@ pub struct Config {
     pub profiles: Profiles,
 }
 
+// This is a helper that preserves *important* config values that are essential to deserialize, even if other things fail..
+#[derive(serde::Deserialize, serde::Serialize, Debug, Default, Clone)]
+pub struct ConfigStatic {
+    #[serde(rename = "MERIGO_DEV_PACKAGE_DIR")]
+    pub merigo_dev_package_dir: Option<PathBuf>,
+}
+
+impl From<ConfigStatic> for Config {
+    fn from(value: ConfigStatic) -> Self {
+        Config {
+            merigo_dev_package_dir: value.merigo_dev_package_dir,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 #[serde(transparent)]
-pub struct Profiles(Vec<ProfileSpec>);
+pub struct Profiles(HashMap<String, Vec<Feature>>);
 
 impl Default for Profiles {
     fn default() -> Self {
-        Self(vec![
-            ProfileSpec {
-                name: "minimal".into(),
-                features: vec![],
-            },
-            ProfileSpec {
-                name: "default".into(),
-                features: vec![Feature::Metrics, Feature::Web3],
-            },
-            ProfileSpec {
-                name: "full".into(),
-                features: vec![
-                    Feature::Metrics,
-                    Feature::Web3,
-                    Feature::OTEL,
-                    Feature::Metrics,
-                ],
-            },
-        ])
+        let mut hm = HashMap::new();
+        hm.insert("minimal".into(), vec![]);
+        hm.insert("default".into(), vec![Feature::Metrics, Feature::Web3]);
+        hm.insert(
+            "full".into(),
+            vec![
+                Feature::Metrics,
+                Feature::Web3,
+                Feature::OTEL,
+                Feature::Metrics,
+            ],
+        );
+
+        Self(hm)
     }
 }
 
@@ -276,18 +288,46 @@ impl Context {
         std::fs::remove_dir_all(&self.config_dir).unwrap();
     }
 
+    // If the file is broken (maybe it uses the older scheme) this function handles that migration part too.
     pub fn write_profiles(&self, name: String, features: Vec<Feature>) -> anyhow::Result<()> {
         let config_file = self.config_dir.join("config.json");
-        let f = std::fs::OpenOptions::new()
+        let mut f = std::fs::OpenOptions::new()
             .write(true)
             .read(true)
-            .open(config_file)?;
+            .open(&config_file)?;
 
-        let current = BufReader::new(&f);
-        let mut cfg: Config = serde_json::from_reader(current)?;
-        cfg.profiles.0.push(ProfileSpec { name, features });
+        let mut buf = String::new();
+        let _bytes_read = f.read_to_string(&mut buf)?;
+
+        let cfg = match serde_json::from_str::<Config>(&buf) {
+            Ok(mut cfg) => {
+                cfg.profiles
+                    .0
+                    .entry(name)
+                    .and_modify(|f| *f = features.clone())
+                    .or_insert(features);
+                cfg
+            }
+            Err(_) => match serde_json::from_str::<ConfigStatic>(&buf) {
+                Ok(cfg_static) => {
+                    let mut cfg = Config::from(cfg_static);
+                    cfg.profiles.0.insert(name, features);
+                    cfg
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Invalid config file format, failed to preserve project path.");
+                    let mut cfg = Config::default();
+                    cfg.profiles.0.insert(name, features);
+                    cfg
+                }
+            },
+        };
+
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&config_file)?;
         let mut writer = std::io::BufWriter::new(f);
-        writer.rewind()?;
 
         serde_json::to_writer(&mut writer, &cfg)?;
         writer.flush()?;

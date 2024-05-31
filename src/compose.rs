@@ -207,12 +207,13 @@ impl Pipeline {
         quiet: bool,
         build: bool,
         attach_future: Option<F>,
+        raw: bool,
     ) -> anyhow::Result<()> {
         features.sort();
 
         let volumes =
             generate_volumes(features, &msde_dir).context("Failed to generate volume bindings")?;
-        let pb = progress_spinner(quiet);
+        let pb = progress_spinner(quiet || raw);
         pb.set_message("Booting base services..");
         let child = Compose::up_custom(
             &[DOCKER_COMPOSE_BASE],
@@ -222,8 +223,8 @@ impl Pipeline {
                 file_streamed_stdin: false,
                 build,
             }),
-            Stdio::null(),
-            Stdio::null(),
+            if raw { Stdio::inherit() } else { Stdio::null() },
+            if raw { Stdio::inherit() } else { Stdio::null() },
             Stdio::piped(),
             &msde_dir,
         )?;
@@ -233,7 +234,7 @@ impl Pipeline {
         let bot_enabled = features.iter().any(|f| matches!(f, Feature::Bot));
 
         for (i, feature) in features.iter().enumerate() {
-            let pb = progress_spinner(quiet);
+            let pb = progress_spinner(quiet || raw);
             pb.set_message(format!("Booting {}..", feature));
             let f = feature.to_target();
             let mut child = Compose::up_custom(
@@ -249,8 +250,8 @@ impl Pipeline {
                     file_streamed_stdin: i == last_feature_idx && bot_enabled,
                     build,
                 }),
-                Stdio::piped(),
-                Stdio::piped(),
+                if raw { Stdio::inherit() } else { Stdio::piped() },
+                if raw { Stdio::inherit() } else { Stdio::piped() },
                 Stdio::piped(),
                 &msde_dir,
             )?;
@@ -265,7 +266,7 @@ impl Pipeline {
         }
 
         if !bot_enabled {
-            let pb = progress_spinner(quiet);
+            let pb = progress_spinner(quiet || raw);
             pb.set_message("Booting MSDE..");
             let mut child = Compose::up_custom(
                 &[DOCKER_COMPOSE_MAIN],
@@ -275,8 +276,8 @@ impl Pipeline {
                     file_streamed_stdin: true,
                     build,
                 }),
-                Stdio::piped(),
-                Stdio::piped(),
+                if raw { Stdio::inherit() } else { Stdio::piped() },
+                if raw { Stdio::inherit() } else { Stdio::piped() },
                 Stdio::piped(),
                 &msde_dir,
             )?;

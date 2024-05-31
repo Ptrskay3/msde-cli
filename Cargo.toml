@@ -25,7 +25,7 @@ serde_json = "1.0.107"
 time = { version = "0.3.29", features = ["serde"] }
 raw-cpuid = "11.0.1"
 md-5 = "0.10.6"
-zip = "1.1.1"
+zip = "2.1.1"
 zip-extensions = "0.6"
 fs_extra = "1.3.0"
 home = "0.5.9"
@@ -76,19 +76,6 @@ install-updater = true
 # TODO: add these if we're ready to publish from the real Merigo account
 # github-releases-repo = "merigo-co/cli"
 # source-tarball = false
-
-[package.metadata.bundle]
-name = "MSDE-CLI"
-identifier = "msde.cli"
-icon = ["32x32.png", "128x128.png", "128x128@2x.png"]
-version = "0.1.0"
-copyright = "Copyright (c) Merigo Inc 2024. All rights reserved."
-category = "Developer Tool"
-short_description = "CLI tool for running the Merigo Dev package."
-long_description = """
-CLI tool for running the Merigo Dev package.
-"""
-osx_frameworks = ["SDL2"]
 
 [package.metadata.wix]
 upgrade-guid = "88E9817A-22F6-45F8-9257-FCD20FAE5E88"

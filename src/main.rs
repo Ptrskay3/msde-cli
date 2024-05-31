@@ -1,245 +1,35 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
-use std::io::BufWriter;
-use std::io::Write;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufReader, BufWriter, Write},
+    path::PathBuf,
+    time::Duration,
+};
 
 use anyhow::Context;
-use clap::ValueEnum;
-use clap::{ArgAction, Parser, Subcommand};
+use clap::Parser;
 use clap_complete::{generate, shells::Shell};
-use dialoguer::Confirm;
-use dialoguer::Input;
+use dialoguer::{Confirm, Input};
 // May work better!
 // https://github.com/fussybeaver/bollard
-use docker_api::conn::TtyChunk;
-use docker_api::opts::ContainerListOpts;
-use docker_api::opts::ContainerStopOpts;
-use docker_api::Docker;
+use docker_api::{
+    opts::{ContainerListOpts, ContainerStopOpts},
+    Docker,
+};
 use flate2::bufread::GzDecoder;
 use futures::StreamExt;
-use indicatif::ProgressBar;
-use indicatif::ProgressStyle;
-use msde_cli::compose::running_containers;
-use msde_cli::compose::Pipeline;
-use msde_cli::env::Feature;
-use msde_cli::env::PackageLocalConfig;
-use msde_cli::game::import_games;
-use msde_cli::init::ensure_valid_project_path;
-use msde_cli::utils;
-use secrecy::ExposeSecret;
-use secrecy::Secret;
+use indicatif::{ProgressBar, ProgressStyle};
+use msde_cli::{
+    cli::{Command, Commands, Target, Web3Kind},
+    compose::Pipeline,
+    env::{Feature, PackageLocalConfig},
+    game::import_games,
+    init::ensure_valid_project_path,
+    utils, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
+};
+use secrecy::{ExposeSecret, Secret};
 use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-const MERIGO_UPSTREAM_VERSION: &str = env!("MERIGO_UPSTREAM_VERSION");
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct MetadataResponse {
-    name: String,
-    tags: Vec<String>,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct ParsedMetadataResponse {
-    org: String,
-    repository: String,
-    tags: Vec<String>,
-    parsed_versions: Vec<String>,
-    image: String,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct Index {
-    valid_until: i64,
-    content: Vec<ParsedMetadataResponse>,
-}
-
-impl ParsedMetadataResponse {
-    fn for_target(&self, target: &Target) -> bool {
-        self.image.starts_with(target.as_ref())
-    }
-
-    fn contains_version(&self, version: &str) -> bool {
-        self.parsed_versions.iter().any(|v| v == version)
-    }
-}
-
-#[derive(Parser, Debug)]
-#[command(version)]
-struct Command {
-    /// Enables verbose output.
-    #[arg(short, long)]
-    debug: bool,
-
-    /// Skip building a local cache of the MSDE image registry.
-    #[arg(short, long)]
-    no_cache: bool,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
-}
-
-impl Command {
-    fn should_ignore_credentials(&self) -> bool {
-        matches!(
-            self.command,
-            None | Some(
-                Commands::ImportGames { .. }
-                    | Commands::Rpc { .. }
-                    | Commands::Log { .. }
-                    | Commands::Down { .. }
-                    | Commands::Up { .. }
-                    | Commands::Docs
-                    | Commands::Status
-                    | Commands::AddProfile { .. }
-                    | Commands::SetProject { .. }
-                    | Commands::GenerateCompletions { .. }
-                    | Commands::UpgradeProject { .. }
-                    | Commands::Clean { .. }
-                    | Commands::Init { .. }
-                    | Commands::BuildCache { .. }
-                    | Commands::Login { .. }
-                    | Commands::Containers { .. }
-                    | Commands::Exec { .. }
-                    | Commands::UpdateBeamFiles { .. }
-                    | Commands::VerifyBeamFiles { .. }
-            )
-        )
-    }
-}
-
-const LATEST: &str = "latest";
-const USER: &str = "merigo-client";
-const DEFAULT_DURATION: i64 = 12;
-
-const REPOS_AND_IMAGES: &[&str; 5] = &[
-    "merigo_dev_packages/compiler-vm-dev",
-    "merigo_dev_packages/msde-vm-dev",
-    "merigo_dev_packages/bot-vm-dev",
-    "web3_services/web3_services_dev",
-    "web3_services/web3_consumer_dev",
-];
-
-#[derive(Debug, Clone)]
-struct ListedContainer {
-    id: String,
-    names: Option<Vec<String>>,
-    image: String,
-}
-
-#[derive(serde::Deserialize, Clone)]
-struct SecretCredentials {
-    ghcr_key: Secret<String>,
-    pull_key: Secret<String>,
-}
-
-#[derive(serde::Serialize)]
-struct UnsafeCredentials {
-    ghcr_key: String,
-    pull_key: String,
-}
-
-fn login(
-    context: &msde_cli::env::Context,
-    ghcr_key: Option<String>,
-    pull_key: Option<String>,
-    file: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
-    if let Some(path_buf) = file {
-        // TODO: Maybe open it, and check whether this file makes sense?
-        std::fs::copy(path_buf, context.config_dir.join("credentials.json"))?;
-    } else {
-        let ghcr_key = ghcr_key.context("ghrc-key is required")?;
-        let pull_key = pull_key.context("pull-key is required")?;
-        let credentials = UnsafeCredentials { ghcr_key, pull_key };
-        let file = File::create(context.config_dir.join("credentials.json"))?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer(&mut writer, &credentials)?;
-        writer.flush()?;
-    }
-    tracing::info!(
-        "stored *unencrypted* credentials in `{:?}`",
-        context.config_dir.join("credentials.json")
-    );
-    Ok(())
-}
-
-fn try_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
-    let f = std::fs::read_to_string(ctx.config_dir.join("credentials.json"))?;
-    let credentials: SecretCredentials =
-        serde_json::from_str(&f).context("invalid credentials file")?;
-    Ok(credentials)
-}
-
-async fn create_index(
-    client: &reqwest::Client,
-    duration: i64,
-    credentials: SecretCredentials,
-) -> anyhow::Result<()> {
-    let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
-    // TODO: Take the config struct into account.
-    std::fs::create_dir_all(".msde").context("Failed to create cache directory")?;
-
-    let key = credentials.ghcr_key.expose_secret();
-    let registry_requests = REPOS_AND_IMAGES.iter().map(|repo_and_image| {
-        let client = &client;
-        async move {
-            let url = format!("https://ghcr.io/v2/merigo-co/{repo_and_image}/tags/list?n=1000");
-            client
-                .get(&url)
-                .bearer_auth(key)
-                .send()
-                .await?
-                // TODO: the error response is not considered here. That can happen when you don't have sufficient permissions.
-                .json::<MetadataResponse>()
-                .await
-        }
-    });
-
-    let responses = futures::future::try_join_all(registry_requests).await?;
-
-    let content = responses
-        .into_iter()
-        .map(|metadata| {
-            let parsed_versions = metadata
-                .tags
-                .iter()
-                .filter_map(|tag| {
-                    version_re
-                        .captures(tag)
-                        .and_then(|cap| cap.get(0).map(|m| m.as_str().to_owned()))
-                })
-                .collect::<Vec<_>>();
-
-            tracing::trace!(name = %metadata.name, numbered_versions = ?parsed_versions.len(), "indexing done");
-            let (org, rest) =  metadata.name.split_once('/').unwrap();
-            let (repository, image) =  rest.split_once('/').unwrap();
-            ParsedMetadataResponse {
-                org: org.to_owned(),
-                repository: repository.to_owned(),
-                tags: metadata.tags,
-                parsed_versions,
-                image: image.to_owned(),
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let index = Index {
-        valid_until: (time::OffsetDateTime::now_utc() + time::Duration::hours(duration))
-            .unix_timestamp(),
-        content,
-    };
-
-    let file = File::create(".msde/index.json")?;
-    let mut writer = BufWriter::new(file);
-    serde_json::to_writer(&mut writer, &index)?;
-    writer.flush()?;
-    tracing::debug!("local cache built");
-    Ok(())
-}
 
 #[cfg(debug_assertions)]
 static LOGLEVEL: &str = "msde_cli=trace";
@@ -884,6 +674,155 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct MetadataResponse {
+    name: String,
+    tags: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ParsedMetadataResponse {
+    org: String,
+    repository: String,
+    tags: Vec<String>,
+    parsed_versions: Vec<String>,
+    image: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct Index {
+    valid_until: i64,
+    content: Vec<ParsedMetadataResponse>,
+}
+
+impl ParsedMetadataResponse {
+    fn for_target(&self, target: &Target) -> bool {
+        self.image.starts_with(target.as_ref())
+    }
+
+    fn contains_version(&self, version: &str) -> bool {
+        self.parsed_versions.iter().any(|v| v == version)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ListedContainer {
+    id: String,
+    names: Option<Vec<String>>,
+    image: String,
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct SecretCredentials {
+    ghcr_key: Secret<String>,
+    pull_key: Secret<String>,
+}
+
+#[derive(serde::Serialize)]
+struct UnsafeCredentials {
+    ghcr_key: String,
+    pull_key: String,
+}
+
+fn login(
+    context: &msde_cli::env::Context,
+    ghcr_key: Option<String>,
+    pull_key: Option<String>,
+    file: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    if let Some(path_buf) = file {
+        // TODO: Maybe open it, and check whether this file makes sense?
+        std::fs::copy(path_buf, context.config_dir.join("credentials.json"))?;
+    } else {
+        let ghcr_key = ghcr_key.context("ghrc-key is required")?;
+        let pull_key = pull_key.context("pull-key is required")?;
+        let credentials = UnsafeCredentials { ghcr_key, pull_key };
+        let file = File::create(context.config_dir.join("credentials.json"))?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, &credentials)?;
+        writer.flush()?;
+    }
+    tracing::info!(
+        "stored *unencrypted* credentials in `{:?}`",
+        context.config_dir.join("credentials.json")
+    );
+    Ok(())
+}
+
+fn try_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
+    let f = std::fs::read_to_string(ctx.config_dir.join("credentials.json"))?;
+    let credentials: SecretCredentials =
+        serde_json::from_str(&f).context("invalid credentials file")?;
+    Ok(credentials)
+}
+
+async fn create_index(
+    client: &reqwest::Client,
+    duration: i64,
+    credentials: SecretCredentials,
+) -> anyhow::Result<()> {
+    let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
+    // TODO: Take the config struct into account.
+    std::fs::create_dir_all(".msde").context("Failed to create cache directory")?;
+
+    let key = credentials.ghcr_key.expose_secret();
+    let registry_requests = REPOS_AND_IMAGES.iter().map(|repo_and_image| {
+        let client = &client;
+        async move {
+            let url = format!("https://ghcr.io/v2/merigo-co/{repo_and_image}/tags/list?n=1000");
+            client
+                .get(&url)
+                .bearer_auth(key)
+                .send()
+                .await?
+                // TODO: the error response is not considered here. That can happen when you don't have sufficient permissions.
+                .json::<MetadataResponse>()
+                .await
+        }
+    });
+
+    let responses = futures::future::try_join_all(registry_requests).await?;
+
+    let content = responses
+        .into_iter()
+        .map(|metadata| {
+            let parsed_versions = metadata
+                .tags
+                .iter()
+                .filter_map(|tag| {
+                    version_re
+                        .captures(tag)
+                        .and_then(|cap| cap.get(0).map(|m| m.as_str().to_owned()))
+                })
+                .collect::<Vec<_>>();
+
+            tracing::trace!(name = %metadata.name, numbered_versions = ?parsed_versions.len(), "indexing done");
+            let (org, rest) =  metadata.name.split_once('/').unwrap();
+            let (repository, image) =  rest.split_once('/').unwrap();
+            ParsedMetadataResponse {
+                org: org.to_owned(),
+                repository: repository.to_owned(),
+                tags: metadata.tags,
+                parsed_versions,
+                image: image.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let index = Index {
+        valid_until: (time::OffsetDateTime::now_utc() + time::Duration::hours(duration))
+            .unix_timestamp(),
+        content,
+    };
+
+    let file = File::create(".msde/index.json")?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, &index)?;
+    writer.flush()?;
+    tracing::debug!("local cache built");
+    Ok(())
+}
+
 fn completions_path(shell: Shell) -> Option<&'static str> {
     match shell {
         Shell::Bash => Some("/usr/share/bash-completion/completions/msde-cli.bash"),
@@ -913,339 +852,6 @@ pub fn new_docker() -> docker_api::Result<Docker> {
 #[cfg(not(unix))]
 pub fn new_docker() -> docker_api::Result<Docker> {
     Docker::new("tcp://127.0.0.1:2375")
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Import all games from the project directory. This command will look at your active project path in games/stages.yml,
-    /// and will import all valid games listed there. For more information how it works, see https://docs.merigo.co/getting-started/devpackage#using-config-stages.yml
-    ImportGames {
-        /// Don't print output to the terminal.
-        #[arg(short, long, action = ArgAction::SetTrue)]
-        quiet: bool,
-    },
-    /// Call into the MSDE system with an RPC. The MSDE service must be running.
-    ///
-    /// Example:
-    ///
-    /// > msde-cli rpc 'IO.puts("hello")'
-    Rpc {
-        /// The Elixir command to run as a quoted string.
-        #[arg(num_args = 1)]
-        cmd: String,
-    },
-    /// Open the documentation page for this package.
-    Docs,
-    /// Show the project status. WIP.
-    Status,
-    /// Sets the project path to the given directory. The directory must contain a valid top-level `metadata.json`.
-    SetProject {
-        #[arg(index = 1)]
-        path: Option<PathBuf>,
-    },
-    /// Register a new profile for running the developer package.
-    AddProfile {
-        /// The name of the profile.
-        #[arg(short, long)]
-        name: String,
-        #[arg(short, long, value_delimiter = ',', num_args = 1..)]
-        features: Vec<msde_cli::env::Feature>,
-    },
-    /// Generate shell auto-completions for this CLI tool.
-    ///
-    /// This command writes auto-completions to stdout, so users are encouraged to pipe it to a file.
-    ///
-    /// Example:
-    ///
-    /// > msde-cli generate-completions | sudo tee /usr/share/bash-completion/completions/msde-cli.bash
-    GenerateCompletions {
-        /// The target shell to generate auto-completions for. If not given, the current shell will be detected.
-        #[arg(short, long)]
-        shell: Option<Shell>,
-    },
-    UpgradeProject {
-        #[arg(short, long)]
-        path: Option<std::path::PathBuf>,
-    },
-    /// Start the services, and wait for the MSDE to be healthy.
-    Up {
-        #[arg(short, long, value_delimiter = ',', num_args = 1..)]
-        features: Vec<msde_cli::env::Feature>,
-
-        // We may use humantime::Duration like so:
-        ///   #[clap(default_value = "100s")]
-        ///   interval: humantime::Duration,
-        #[arg(short, long, default_value_t = 300)]
-        timeout: u64,
-
-        #[arg(short, long, action = ArgAction::SetTrue)]
-        quiet: bool,
-
-        /// After a successful start attach to MSDE container logs.
-        #[arg(long, action = ArgAction::SetTrue)]
-        attach: bool,
-
-        /// (Re)build the services (pass --build to docker compose).
-        #[arg(long, action = ArgAction::SetTrue)]
-        build: bool,
-
-        /// Start all commands in raw mode, meaning all output is transmitted to the calling terminal without changes.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "quiet")]
-        raw: bool,
-    },
-    /// Wipe out all config files and folders.
-    Clean {
-        /// Continue without asking for further confirmation.
-        #[arg(short = 'y', long, action = ArgAction::SetTrue)]
-        always_yes: bool,
-    },
-    // TODO: implement
-    /// Runs the target service(s), then attaches to its logs
-    Run {
-        #[command(subcommand)]
-        target: Option<Target>,
-    },
-    Stop,
-    Start,
-    /// Stop all running services and remove stored game data by cleaning associated Docker volumes.
-    Down {
-        /// The maximum wait duration for the down command to finish before exiting with an error.
-        #[arg(short, long, default_value_t = 300)]
-        timeout: u64,
-    },
-    /// Attach the logs of the target service. This command will not display logs from the past.
-    Log {
-        #[command(subcommand)]
-        target: Target,
-    },
-    /// Pull the latest docker image of the target service(s).
-    Pull {
-        #[command(subcommand)]
-        target: Option<Target>,
-
-        // Note: the "version" argument in the other subcommand (kind of confusing)
-        /// The specific version to pull.
-        #[arg(short, long, required_unless_present = "version")]
-        version: Option<String>,
-    },
-    Ssh,
-    Shell,
-    /// Initialize the MSDE developer package.
-    ///
-    /// This command will not delete any files, but will override anything in the target directory if the package content
-    /// conflicts with an existing file.
-    /// For that exact reason a non-empty directory will be rejected, unless the --force flag is present.
-    Init {
-        /// The path where to initialize the project.
-        #[arg(short, long)]
-        path: Option<std::path::PathBuf>,
-
-        /// Allows initializing inside non-empty directories.
-        #[arg(long, action = ArgAction::SetTrue)]
-        force: bool,
-
-        /// Pull the associated images prematurely. Use it with the `--features` flag to specify which features to pull.
-        #[arg(short, long, action = ArgAction::SetTrue)]
-        pull_images: bool,
-
-        /// Don't pull any associated images prematurely.
-        #[arg(short, long, action = ArgAction::SetTrue)]
-        no_pull_images: bool,
-
-        /// The target features to pull. If no features is required, just pass the empty value like so: `--features `.
-        #[arg(short, long, value_delimiter = ',', num_args = 0..)]
-        features: Option<Vec<msde_cli::env::Feature>>,
-    },
-    // TODO: What is this command?
-    /// Run a command in the target service.
-    Exec {
-        /// The command to execute.
-        cmd: String,
-    },
-    /// Verify the integrity of BEAM files.
-    VerifyBeamFiles {
-        /// The version to verify the BEAM files against.
-        #[arg(short, long)]
-        version: Option<semver::Version>,
-
-        /// The path where the BEAM files are located. By default, this is the `project_folder/merigo_extension`.
-        #[arg(short, long)]
-        path: Option<std::path::PathBuf>,
-    },
-    /// Update the BEAM files.
-    UpdateBeamFiles {
-        /// The version of the BEAM files to download.
-        #[arg(short, long)]
-        version: Option<semver::Version>,
-
-        /// The path where the BEAM files should be put. By default, this is the `project_folder/merigo_extension`.
-        #[arg(short, long)]
-        path: Option<std::path::PathBuf>,
-
-        /// Skip verifying the integrity of the BEAM files.
-        #[arg(long, action = ArgAction::SetTrue)]
-        no_verify: bool,
-    },
-    // TODO: This command doesn't really make sense. Maybe as an element of a project upgrade?
-    /// Checks and stops all running containers.
-    Containers {
-        #[arg(short = 'y', long, action = ArgAction::SetTrue)]
-        always_yes: bool,
-    },
-    // TODO: This is broken if auth is not correct. Also it doesn't really make sense?
-    /// Build a cache around all available Merigo Docker images in the remote registry.
-    BuildCache {
-        /// Specifies the expiration duration of the cache in hours.
-        #[arg(short, long)]
-        duration: Option<i64>,
-    },
-    /// Check the available versions of the target service.
-    Versions {
-        #[command(subcommand)]
-        target: Target,
-    },
-    Login {
-        // The key used for GHCR authentication.
-        #[arg(short, long)]
-        ghcr_key: Option<String>,
-        // The key used for pulling Merigo images.
-        #[arg(short, long)]
-        pull_key: Option<String>,
-
-        #[arg(short, long)]
-        file: Option<std::path::PathBuf>,
-    },
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Subcommand)]
-#[command(subcommand_negates_reqs = true)]
-enum Target {
-    Msde {
-        #[arg(short, long)]
-        version: Option<String>,
-    },
-    Bot {
-        #[arg(short, long)]
-        version: Option<String>,
-    },
-    Web3 {
-        #[arg(short, long)]
-        version: Option<String>,
-
-        #[arg(short, long)]
-        kind: Option<Web3Kind>,
-    },
-    Compiler {
-        #[arg(short, long)]
-        version: Option<String>,
-    },
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, ValueEnum)]
-enum Web3Kind {
-    All,
-    Consumer,
-    Producer,
-}
-
-impl Target {
-    async fn attach(&self, docker: &Docker) -> anyhow::Result<()> {
-        let id = self.get_id(docker).await?;
-
-        let container = docker.containers().get(id);
-
-        let mut multiplexer = container.attach().await?;
-        while let Some(chunk) = multiplexer.next().await {
-            if let Ok(TtyChunk::StdOut(chunk) | TtyChunk::StdErr(chunk)) = chunk {
-                print!("{}", String::from_utf8_lossy(&chunk));
-            }
-        }
-        Ok(())
-    }
-    fn get_version(&self) -> Option<&String> {
-        match self {
-            Target::Msde { version }
-            | Target::Bot { version }
-            | Target::Web3 { version, .. }
-            | Target::Compiler { version } => version.as_ref(),
-        }
-    }
-
-    async fn get_id(&self, docker: &Docker) -> anyhow::Result<String> {
-        let target = match self {
-            Target::Msde { .. } => "/msde-vm-dev",
-            Target::Bot { .. } => "/bot-vm-dev",
-            Target::Web3 { .. } => "/web3-vm-dev",
-            Target::Compiler { .. } => "/compiler-vm-dev",
-        };
-        let containers = running_containers(docker).await?;
-        let container_id = containers
-            .get(target)
-            .context("Target container is not running")?;
-        Ok(container_id.clone())
-    }
-
-    fn images_and_tags(&self) -> Vec<(String, String)> {
-        match self {
-            Target::Msde { version } | Target::Bot { version } | Target::Compiler { version } => {
-                let tag = match version {
-                    Some(version) => format!("{self}-vm-dev-docker-{version}"),
-                    None => "latest".to_owned(),
-                };
-                tracing::trace!(%tag, "assembled tag is");
-
-                vec![(
-                    format!("docker.pkg.github.com/merigo-co/merigo_dev_packages/{self}-vm-dev"),
-                    tag,
-                )]
-            }
-            Target::Web3 { version, .. } => {
-                let tag = match version {
-                    Some(version) => version.to_string(),
-                    None => LATEST.to_owned(),
-                };
-                tracing::trace!(%tag, "assembled tag is");
-
-                vec![
-                    (
-                        "docker.pkg.github.com/merigo-co/web3_services/web3_services_dev"
-                            .to_string(),
-                        tag.clone(),
-                    ),
-                    (
-                        "docker.pkg.github.com/merigo-co/web3_services/web3_consumer_dev"
-                            .to_string(),
-                        tag,
-                    ),
-                ]
-            }
-        }
-    }
-}
-
-// FIXME: These just discard the version information.. not really intuitive
-impl std::fmt::Display for Target {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let repr = match self {
-            Target::Msde { .. } => "msde",
-            Target::Bot { .. } => "bot",
-            Target::Web3 { .. } => "web3",
-            Target::Compiler { .. } => "compiler",
-        };
-
-        write!(f, "{repr}")
-    }
-}
-
-impl AsRef<str> for Target {
-    fn as_ref(&self) -> &str {
-        match self {
-            Target::Msde { .. } => "msde",
-            Target::Bot { .. } => "bot",
-            Target::Web3 { .. } => "web3",
-            Target::Compiler { .. } => "compiler",
-        }
-    }
 }
 
 fn handle_yes_no_prompt() -> bool {

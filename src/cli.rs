@@ -111,15 +111,18 @@ pub enum Commands {
     },
     /// Start the services, and wait for the MSDE to be healthy.
     Up {
+        /// The features to enable for this run.
         #[arg(short, long, value_delimiter = ',', num_args = 1..)]
         features: Vec<crate::env::Feature>,
 
         // We may use humantime::Duration like so:
-        ///   #[clap(default_value = "100s")]
-        ///   interval: humantime::Duration,
+        //   #[clap(default_value = "100s")]
+        //   interval: humantime::Duration,
+        /// The maximum duration in seconds to wait for services to be healthy before exiting.
         #[arg(short, long, default_value_t = 300)]
         timeout: u64,
 
+        /// Do not print anything to the terminal
         #[arg(short, long, action = ArgAction::SetTrue)]
         quiet: bool,
 

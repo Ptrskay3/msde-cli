@@ -68,6 +68,8 @@ pub struct StageConfig {
     #[serde(rename = "statusUpdateInterval")]
     status_update_interval: Option<serde_json::Value>,
     read_block_delay: Option<serde_json::Value>,
+    #[serde(skip_serializing)]
+    disabled_in_stages: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -237,7 +239,13 @@ pub fn start_stages_mapping(
         let suids: Vec<_> = stage_config
             .stages
             .iter()
-            .filter_map(|stage| if stage.launch { Some(stage.suid) } else { None })
+            .filter_map(|stage| {
+                if stage.launch && !stage.disabled_in_stages.unwrap_or(false) {
+                    Some(stage.suid)
+                } else {
+                    None
+                }
+            })
             .collect();
         mapping
             .entry(stage_config.guid)
@@ -348,6 +356,7 @@ pub fn parse_package_local_stages_file(ctx: &Context) -> anyhow::Result<Vec<Stag
                                             .into_owned(),
                                     ),
                                 },
+                                disabled_in_stages: stage.disabled,
                                 ..Default::default()
                             })
                     } else {
@@ -373,6 +382,7 @@ pub fn parse_package_local_stages_file(ctx: &Context) -> anyhow::Result<Vec<Stag
                                             .into_owned(),
                                     ),
                                 },
+                                disabled_in_stages: stage.disabled,
                                 ..Default::default()
                             }],
                             org: None,
@@ -420,11 +430,10 @@ pub fn merge_stages(this: Vec<Stages>, other: Vec<Stages>) -> Vec<Stages> {
         .collect()
 }
 
+// This function is using streams rather than try_join_all, since it may overwhelm erlang rpc
+// calls and we'd get errors about the node being used elsewhere.
+// TODO: refactor to use well-defined functions
 pub async fn import_games(ctx: &Context, docker: Docker, quiet: bool) -> anyhow::Result<()> {
-    // Using streams rather than try_join_all, since it may overwhelm erlang rpc
-    // calls and we'd get errors about the node being used elsewhere.
-    // TODO: Take the "disabled" key into account.
-    // also TODO: refactor to use well-defined functions
     let pb = progress_spinner(quiet);
     pb.set_message("🔍 Discovering stages..");
     let local = parse_package_local_stages_file(ctx)?;

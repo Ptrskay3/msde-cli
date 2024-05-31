@@ -34,7 +34,7 @@ use secrecy::Secret;
 use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-const UPSTREAM_MERIGO_VERSION: &str = env!("MERIGO_UPSTREAM_VERSION");
+const MERIGO_UPSTREAM_VERSION: &str = env!("MERIGO_UPSTREAM_VERSION");
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct MetadataResponse {
@@ -268,7 +268,7 @@ async fn main() -> anyhow::Result<()> {
         ..dialoguer::theme::ColorfulTheme::default()
     };
 
-    let upstream_version = semver::Version::parse(UPSTREAM_MERIGO_VERSION).unwrap();
+    let upstream_version = semver::Version::parse(MERIGO_UPSTREAM_VERSION).unwrap();
 
     let current_shell = Shell::from_env().unwrap_or(Shell::Bash);
     let mut ctx = msde_cli::env::Context::from_env()?;

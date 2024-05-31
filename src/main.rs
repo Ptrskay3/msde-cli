@@ -431,8 +431,9 @@ async fn main() -> anyhow::Result<()> {
 
             if utils::wsl() {
                 if target.canonicalize().unwrap().starts_with("/mnt/") {
+                    tracing::warn!("You seem to be using the Windows filesystem.\nIt's highly recommended to use the WSL filesystem, otherwise the package will not work correctly.");
                     let res: String = Input::with_theme(&theme)
-                        .with_prompt("You seem to be using the Windows filesystem.\nIt's highly recommended to use the WSL filesystem, otherwise the package will not work correctly.\nInput a directory, or press enter to accept the default.")
+                        .with_prompt("Input a directory, or press enter to accept the default.")
                         .default(ctx.home.join("merigo").to_string_lossy().into_owned())
                         .interact_text()
                         .unwrap();
@@ -483,11 +484,11 @@ async fn main() -> anyhow::Result<()> {
                         .collect::<Vec<Feature>>()
             });
 
-                let extra_images_from_features = features
-                    .iter()
-                    .flat_map(|feature| feature.required_images_and_tags());
-
-                images_and_tags.extend(extra_images_from_features);
+                images_and_tags.extend(
+                    features
+                        .iter()
+                        .flat_map(|feature| feature.required_images_and_tags()),
+                );
 
                 let m = indicatif::MultiProgress::new();
                 let mut tasks = vec![];

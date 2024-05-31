@@ -214,7 +214,7 @@ pub enum Commands {
         pull_images: bool,
 
         /// Don't pull any associated images prematurely.
-        #[arg(short, long, action = ArgAction::SetTrue)]
+        #[arg(short, long, action = ArgAction::SetTrue, conflicts_with = "pull_images")]
         no_pull_images: bool,
 
         /// The target features to pull. If no features is required, just pass the empty value like so: `--features `.

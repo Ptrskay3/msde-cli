@@ -96,7 +96,7 @@ impl Compose {
             .args(files)
             .arg("up")
             .args(opts.into_args())
-            .env("VSN", "3.10.0")
+            .env("VSN", "3.10.0") // TODO: Do not hardcode
             .spawn()
             .map_err(Into::into)
     }
@@ -176,7 +176,7 @@ impl Pipeline {
                     },
                     Err(e) => {
                         // FIXME: Unclear from the documentation what happens here. Probably things go really wrong here, so we should just exit immediately.
-                        println!("{e}");
+                        eprintln!("{e}");
                         return Err(anyhow::Error::msg("Failed"));
 
                     },

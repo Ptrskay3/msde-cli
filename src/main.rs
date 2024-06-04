@@ -390,7 +390,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
-            Pipeline::from_features(
+            Pipeline::up_from_features(
                 features.as_mut_slice(),
                 msde_dir,
                 metadata.target_msde_version.unwrap().to_string().as_str(),

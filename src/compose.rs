@@ -345,8 +345,16 @@ impl Pipeline {
                 file_streamed_stdin: false,
                 build,
             }),
-            if raw { Stdio::inherit() } else { Stdio::null() },
-            if raw { Stdio::inherit() } else { Stdio::null() },
+            if raw {
+                Stdio::inherit()
+            } else {
+                Stdio::piped()
+            },
+            if raw {
+                Stdio::inherit()
+            } else {
+                Stdio::piped()
+            },
             Stdio::piped(),
             &msde_dir,
         )?;

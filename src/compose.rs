@@ -336,6 +336,7 @@ impl Pipeline {
             // Attaching overrides quiet, since we don't want to intercept logs from the container with the progress spinner.
             if let Err(e) = tokio::try_join!(attach_future, wait_with_timeout(docker, true)) {
                 tracing::error!(error = %e, "Failed to start MSDE");
+                anyhow::bail!("Failed.");
             }
         } else {
             wait_with_timeout(docker, quiet).await?;

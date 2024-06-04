@@ -399,7 +399,9 @@ async fn main() -> anyhow::Result<()> {
                 raw,
             )
             .await?;
+            // TODO: Attaching after the health check is different behavior than the up command..
             if let Some(attach_future) = attach_future {
+                tracing::info!("Attaching to MSDE logs.");
                 if let Err(e) = tokio::try_join!(
                     attach_future,
                     import_games(&ctx, docker, quiet || raw || attach)
@@ -430,7 +432,12 @@ async fn main() -> anyhow::Result<()> {
             });
 
             if utils::wsl() {
-                if target.canonicalize().unwrap().starts_with("/mnt/") {
+                if target.starts_with("/mnt/")
+                    || target
+                        .canonicalize()
+                        .map(|p| p.starts_with("/mnt/"))
+                        .unwrap_or(false)
+                {
                     tracing::warn!("You seem to be using the Windows filesystem.\nIt's highly recommended to use the WSL filesystem, otherwise the package will not work correctly.");
                     let res: String = Input::with_theme(&theme)
                         .with_prompt("Input a directory, or press enter to accept the default.")

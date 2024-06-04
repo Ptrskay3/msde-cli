@@ -66,6 +66,41 @@ impl<'a> ComposeOpts<'a> {
 }
 
 impl Compose {
+    pub fn start_custom<S, P>(
+        files: &[&str],
+        opts: Option<ComposeOpts>,
+        stdout: S,
+        stderr: S,
+        stdin: S,
+        msde_dir: P,
+    ) -> anyhow::Result<Child>
+    where
+        S: Into<Stdio>,
+        P: AsRef<Path>,
+    {
+        let mut files = files
+            .iter()
+            .flat_map(|file| ["-f", file])
+            .collect::<Vec<_>>();
+        let opts = opts.unwrap_or_default();
+        if opts.file_streamed_stdin {
+            files.extend(&["-f", "-"])
+        }
+
+        Command::new("docker")
+            .current_dir(msde_dir)
+            .stdout(stdout)
+            .stderr(stderr)
+            .stdin(stdin)
+            .arg("compose")
+            .args(files)
+            .arg("start")
+            .args(opts.into_args())
+            .env("VSN", "3.10.0") // TODO: Do not hardcode
+            .spawn()
+            .map_err(Into::into)
+    }
+
     pub fn up_custom<S, P>(
         files: &[&str],
         opts: Option<ComposeOpts>,
@@ -97,6 +132,32 @@ impl Compose {
             .arg("up")
             .args(opts.into_args())
             .env("VSN", "3.10.0") // TODO: Do not hardcode
+            .spawn()
+            .map_err(Into::into)
+    }
+
+    pub fn stop_all<P>(msde_dir: P) -> anyhow::Result<Child>
+    where
+        P: AsRef<Path>,
+    {
+        let files = &[
+            DOCKER_COMPOSE_BOT,
+            DOCKER_COMPOSE_MAIN,
+            DOCKER_COMPOSE_METRICS,
+            DOCKER_COMPOSE_OTEL,
+            DOCKER_COMPOSE_WEB3,
+        ]
+        .iter()
+        .flat_map(|file| ["-f", file])
+        .collect::<Vec<_>>();
+
+        Command::new("docker")
+            .current_dir(msde_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .arg("compose")
+            .args(files)
+            .arg("stop")
             .spawn()
             .map_err(Into::into)
     }
@@ -195,8 +256,71 @@ impl Pipeline {
         Ok(())
     }
 
+    pub async fn stop_all<P: AsRef<Path>>(
+        docker: &Docker,
+        msde_dir: P,
+        timeout: u64,
+    ) -> anyhow::Result<()> {
+        let spinner_style = ProgressStyle::with_template("{spinner:.blue} {msg}")
+            .unwrap()
+            .tick_strings(&[
+                "⠁", "⠂", "⠄", "⡀", "⡈", "⡐", "⡠", "⣀", "⣁", "⣂", "⣄", "⣌", "⣔", "⣤", "⣥", "⣦",
+                "⣮", "⣶", "⣷", "⣿", "⡿", "⠿", "⢟", "⠟", "⡛", "⠛", "⠫", "⢋", "⠋", "⠍", "⡉", "⠉",
+                "⠑", "⠡", "⢁",
+            ]);
+        let pb = ProgressBar::new(1);
+        pb.set_style(spinner_style);
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+        pb.set_message("Stopping all services..");
+        let mut child = Compose::stop_all(&msde_dir)?;
+
+        tokio::select! {
+            exc = child.wait() => {
+                match exc {
+                    Ok(status) if status.success() => {
+                        web3_stop_consumers(docker).await?;
+                        pb.finish_with_message("✅ All services stopped.")
+                    },
+                    Ok(status) => {
+                        pb.finish_with_message(format!("❌ Failed to stop services, stopping process.. (exit status {:?})", status.code().unwrap_or(1)));
+                        let mut stdout = child.stdout.take().context("Failed to take child stdout")?;
+                        let mut stderr = child.stderr.take().context("Failed to take child stderr")?;
+                        let mut stdout_buf = vec![];
+                        let mut stderr_buf = vec![];
+                        stdout.read_to_end(&mut stdout_buf).await?;
+                        stderr.read_to_end(&mut stderr_buf).await?;
+                        drop(stdout);
+                        drop(stderr);
+
+                        let log_path = write_failed_start_log(&msde_dir, stdout_buf.as_slice(), stderr_buf.as_slice()).await?;
+                        println!("You may find the output of the failing command at:");
+                        println!("  {}  ", log_path.display());
+                        return Err(anyhow::Error::msg("Failed"));
+
+                    },
+                    Err(e) => {
+                        // FIXME: Unclear from the documentation what happens here. Probably things go really wrong here, so we should just exit immediately.
+                        eprintln!("{e}");
+                        return Err(anyhow::Error::msg("Failed"));
+
+                    },
+                }
+            },
+            _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
+                pb.finish_with_message("❌ Stopping services timed out, stopping process..");
+                child.start_kill()?;
+                let result  = child.wait_with_output().await?;
+                let log_path = write_failed_start_log(&msde_dir, &result.stdout, &result.stderr).await?;
+                println!("You may find the output of the failing command at:");
+                println!("  {}  ", log_path.display());
+                return Err(anyhow::Error::msg("Failed"));
+            },
+        }
+        Ok(())
+    }
+
     // FIXME: Too many arguments
-    pub async fn from_features<P: AsRef<Path>, F: Future<Output = anyhow::Result<()>>>(
+    pub async fn up_from_features<P: AsRef<Path>, F: Future<Output = anyhow::Result<()>>>(
         features: &mut [Feature],
         msde_dir: P,
         vsn: &str,

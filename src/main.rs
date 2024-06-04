@@ -344,7 +344,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
-            Pipeline::from_features(
+            Pipeline::up_from_features(
                 features.as_mut_slice(),
                 msde_dir,
                 // FIXME: Why `target_msde_version` is an Option? Probably it shouldn't be.
@@ -363,6 +363,12 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("project must be set")
             };
             Pipeline::down_all(&docker, msde_dir, timeout).await?;
+        }
+        Some(Commands::Stop { timeout }) => {
+            let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
+                anyhow::bail!("project must be set")
+            };
+            Pipeline::stop_all(&docker, msde_dir, timeout).await?;
         }
         Some(Commands::Run {
             mut features,

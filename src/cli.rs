@@ -169,7 +169,11 @@ pub enum Commands {
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "quiet")]
         raw: bool,
     },
-    Stop,
+    Stop {
+        /// The maximum wait duration in seconds for the stop command to finish before exiting with an error.
+        #[arg(short, long, default_value_t = 300)]
+        timeout: u64,
+    },
     Start,
     /// Stop all running services and remove stored game data by cleaning associated Docker volumes.
     Down {

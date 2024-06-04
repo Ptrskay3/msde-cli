@@ -50,7 +50,6 @@ impl Command {
                     | Commands::BuildCache { .. }
                     | Commands::Login { .. }
                     | Commands::Containers { .. }
-                    | Commands::Exec { .. }
                     | Commands::UpdateBeamFiles { .. }
                     | Commands::VerifyBeamFiles { .. }
             )
@@ -220,12 +219,6 @@ pub enum Commands {
         /// The target features to pull. If no features is required, just pass the empty value like so: `--features `.
         #[arg(short, long, value_delimiter = ',', num_args = 0..)]
         features: Option<Vec<crate::env::Feature>>,
-    },
-    // TODO: What is this command?
-    /// Run a command in the target service.
-    Exec {
-        /// The command to execute.
-        cmd: String,
     },
     /// Verify the integrity of BEAM files.
     VerifyBeamFiles {

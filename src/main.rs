@@ -166,9 +166,6 @@ async fn main() -> anyhow::Result<()> {
             msde_cli::updater::verify_beam_files(version, path)?;
             tracing::info!("BEAM files verified.");
         }
-        Some(Commands::Exec { .. }) => {
-            todo!();
-        }
         Some(Commands::Versions { target }) => {
             let file = File::open(".msde/index.json")
                 .context("local cache not found, please omit the `--no-cache` flag")?;
@@ -431,21 +428,17 @@ async fn main() -> anyhow::Result<()> {
                 PathBuf::from(res)
             });
 
-            if utils::wsl() {
-                if target.starts_with("/mnt/")
-                    || target
+            if utils::wsl() && (target.starts_with("/mnt/") || target
                         .canonicalize()
                         .map(|p| p.starts_with("/mnt/"))
-                        .unwrap_or(false)
-                {
-                    tracing::warn!("You seem to be using the Windows filesystem.\nIt's highly recommended to use the WSL filesystem, otherwise the package will not work correctly.");
-                    let res: String = Input::with_theme(&theme)
-                        .with_prompt("Input a directory, or press enter to accept the default.")
-                        .default(ctx.home.join("merigo").to_string_lossy().into_owned())
-                        .interact_text()
-                        .unwrap();
-                    target = PathBuf::from(res);
-                }
+                        .unwrap_or(false)) {
+                tracing::warn!("You seem to be using the Windows filesystem.\nIt's highly recommended to use the WSL filesystem, otherwise the package will not work correctly.");
+                let res: String = Input::with_theme(&theme)
+                    .with_prompt("Input a directory, or press enter to accept the default.")
+                    .default(ctx.home.join("merigo").to_string_lossy().into_owned())
+                    .interact_text()
+                    .unwrap();
+                target = PathBuf::from(res);
             }
 
             msde_cli::init::ensure_valid_project_path(&target, force)?;

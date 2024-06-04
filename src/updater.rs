@@ -59,7 +59,7 @@ pub fn verify_beam_files<P: AsRef<Path> + std::fmt::Debug>(
     let mut f = std::fs::File::open(ext_priv_dir.as_ref().join("checksum.txt"))?;
     f.read_to_string(&mut buf)?;
     let Some((version, checksum)) = buf.split_once(':') else {
-        anyhow::bail!("invalid checksum file")
+        anyhow::bail!("invalid checksum file, file did not contain a ':'")
     };
     let version = semver::Version::parse(version)?;
 

@@ -304,7 +304,7 @@ impl Context {
                 cfg.profiles
                     .0
                     .entry(name)
-                    .and_modify(|f| *f = features.clone())
+                    .and_modify(|f| f.clone_from(&features))
                     .or_insert(features);
                 cfg
             }

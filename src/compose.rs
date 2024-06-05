@@ -320,7 +320,11 @@ impl Pipeline {
     }
 
     // FIXME: Too many arguments
-    pub async fn up_from_features<P: AsRef<Path>, F: Future<Output = anyhow::Result<()>>>(
+    pub async fn up_from_features<
+        P: AsRef<Path>,
+        F: Future<Output = anyhow::Result<()>>,
+        G: Future<Output = anyhow::Result<()>>,
+    >(
         features: &mut [Feature],
         msde_dir: P,
         vsn: &str,
@@ -329,6 +333,7 @@ impl Pipeline {
         quiet: bool,
         build: bool,
         attach_future: Option<F>,
+        import_hook: Option<G>,
         raw: bool,
     ) -> anyhow::Result<()> {
         features.sort();
@@ -461,18 +466,36 @@ impl Pipeline {
             }));
         }
         pb.finish_with_message("✅ Registered post-init hooks.");
-
-        if let Some(attach_future) = attach_future {
-            pb.set_draw_target(ProgressDrawTarget::hidden());
-            tracing::info!("Attaching to MSDE logs..");
-            // Attaching overrides quiet, since we don't want to intercept logs from the container with the progress spinner.
-            if let Err(e) = tokio::try_join!(attach_future, wait_with_timeout(docker, true)) {
-                tracing::error!(error = %e, "Failed to start MSDE");
-                anyhow::bail!("Failed.");
+        match (attach_future, import_hook) {
+            (None, None) => {
+                wait_with_timeout(docker, quiet).await?;
             }
-        } else {
-            wait_with_timeout(docker, quiet).await?;
+            (None, Some(import_hook)) => {
+                wait_with_timeout(docker, quiet).await?;
+                import_hook.await?;
+            }
+            (Some(attach_future), None) => {
+                pb.set_draw_target(ProgressDrawTarget::hidden());
+                tracing::info!("Attaching to MSDE logs..");
+                // Attaching overrides quiet, since we don't want to intercept logs from the container with the progress spinner.
+                if let Err(e) = tokio::try_join!(attach_future, wait_with_timeout(docker, true)) {
+                    tracing::error!(error = %e, "Failed to start MSDE");
+                    anyhow::bail!("Failed.");
+                }
+            }
+            (Some(attach_future), Some(import_hook)) => {
+                pb.set_draw_target(ProgressDrawTarget::hidden());
+                tracing::info!("Attaching to MSDE logs..");
+                // Attaching overrides quiet, since we don't want to intercept logs from the container with the progress spinner.
+                if let Err(e) =
+                    tokio::try_join!(attach_future, wait_with_timeout(docker, true), import_hook)
+                {
+                    tracing::error!(error = %e, "Failed to start MSDE");
+                    anyhow::bail!("Failed.");
+                }
+            }
         }
+
         pb.set_message("Waiting for post-init hooks to finish..");
         // If we don't attach, we'll need to wait for this delayed call to finish before exiting.
         if let Some(handle) = handle {

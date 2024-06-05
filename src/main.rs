@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context;
+use anyhow::Context as _;
 use clap::Parser;
 use clap_complete::{generate, shells::Shell};
 use dialoguer::{Confirm, Input};
@@ -22,7 +22,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use msde_cli::{
     cli::{Command, Commands, Target, Web3Kind},
     compose::Pipeline,
-    env::{Feature, PackageLocalConfig},
+    env::{Context, Feature, PackageLocalConfig},
     game::import_games,
     init::ensure_valid_project_path,
     utils, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
@@ -37,7 +37,7 @@ static LOGLEVEL: &str = "msde_cli=trace";
 #[cfg(not(debug_assertions))]
 static LOGLEVEL: &str = "msde_cli=info";
 
-type BoxedAttachFuture = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>>>>;
+type BoxedFuture = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>>>>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -354,6 +354,7 @@ async fn main() -> anyhow::Result<()> {
                 quiet,
                 build,
                 attach_future,
+                Option::<BoxedFuture>::None,
                 raw,
             )
             .await?;
@@ -390,6 +391,16 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
+            // Just a utility function to add an artificial delay
+            async fn import_games_future(
+                ctx: &Context,
+                docker: Docker,
+                quiet: bool,
+            ) -> anyhow::Result<()> {
+                tokio::time::sleep(Duration::from_secs(8)).await;
+                import_games(&ctx, docker, quiet).await
+            }
+
             Pipeline::up_from_features(
                 features.as_mut_slice(),
                 msde_dir,
@@ -398,22 +409,15 @@ async fn main() -> anyhow::Result<()> {
                 &docker,
                 quiet,
                 build,
-                Option::<BoxedAttachFuture>::None,
+                attach_future,
+                Some(import_games_future(
+                    &ctx,
+                    docker.clone(),
+                    quiet || raw || attach,
+                )),
                 raw,
             )
             .await?;
-            // TODO: Attaching after the health check is different behavior than the up command..
-            if let Some(attach_future) = attach_future {
-                tracing::info!("Attaching to MSDE logs.");
-                if let Err(e) = tokio::try_join!(
-                    attach_future,
-                    import_games(&ctx, docker, quiet || raw || attach)
-                ) {
-                    tracing::error!(error = %e, "Failed to start MSDE");
-                }
-            } else {
-                import_games(&ctx, docker, quiet || raw).await?;
-            }
         }
         Some(Commands::Init {
             path,
@@ -434,10 +438,13 @@ async fn main() -> anyhow::Result<()> {
                 PathBuf::from(res)
             });
 
-            if utils::wsl() && (target.starts_with("/mnt/") || target
+            if utils::wsl()
+                && (target.starts_with("/mnt/")
+                    || target
                         .canonicalize()
                         .map(|p| p.starts_with("/mnt/"))
-                        .unwrap_or(false)) {
+                        .unwrap_or(false))
+            {
                 tracing::warn!("You seem to be using the Windows filesystem.\nIt's highly recommended to use the WSL filesystem, otherwise the package will not work correctly.");
                 let res: String = Input::with_theme(&theme)
                     .with_prompt("Input a directory, or press enter to accept the default.")

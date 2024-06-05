@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
             (Some(msde_dir), _) => {
                 tracing::info!(path = %msde_dir.display(), "Active project is at");
                 if let Err(e) = &ctx.run_project_checks(self_version.clone()) {
-                    tracing::warn!(error = %e, "project is invalid"); // TODO: suggest upgrade if version mismatch.. probably thiserror is required here
+                    tracing::warn!(error = %e, "project is invalid");
                 }
             }
             (None, Ok(_)) => {}
@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
 
             let Some(path) = path.or_else(|| {
                 ctx.msde_dir
-                    .map(|msde_dir| msde_dir.join("merigo_extension"))
+                    .map(|msde_dir| msde_dir.join("merigo-extension"))
             }) else {
                 anyhow::bail!(
                     "No path found to merigo extension. Please specify the --path argument."

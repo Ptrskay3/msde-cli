@@ -390,23 +390,35 @@ impl Context {
     pub fn run_project_checks(
         &self,
         self_version: semver::Version,
-    ) -> anyhow::Result<Option<PackageLocalConfig>> {
+    ) -> Result<Option<PackageLocalConfig>, ProjectCheckErrors> {
         let Some(msde_dir) = self.msde_dir.as_ref() else {
             return Ok(None);
         };
         let metadata_file = msde_dir.join("./metadata.json");
-        anyhow::ensure!(metadata_file.exists(), "metadata file is missing");
+
         let f = fs::read_to_string(metadata_file)?;
 
-        let metadata =
-            serde_json::from_str::<PackageLocalConfig>(&f).context("metadata file is invalid")?;
+        let metadata = serde_json::from_str::<PackageLocalConfig>(&f)?;
 
         let project_version = semver::Version::parse(&metadata.self_version)?;
         if project_version != self_version {
-            anyhow::bail!(
-                "Project is version {project_version}, but CLI is version {self_version}."
-            )
+            return Err(ProjectCheckErrors::VersionMismatch(
+                project_version,
+                self_version,
+            ));
         }
         Ok(Some(metadata))
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProjectCheckErrors {
+    #[error("metadata.json file is missing")]
+    MissingMetadata(#[from] std::io::Error),
+    #[error("metadata.json file is invalid: {0}")]
+    InvalidMetadata(#[from] serde_json::Error),
+    #[error("Project is outdated: project version is {0}, but CLI is version {1}")]
+    VersionMismatch(semver::Version, semver::Version),
+    #[error("Invalid project version in metadata.json")]
+    InvalidVersion(#[from] semver::Error),
 }

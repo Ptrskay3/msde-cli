@@ -14,7 +14,7 @@ use docker_api::{
     Docker, Exec,
 };
 
-use futures::{StreamExt, TryStreamExt};
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use serde::{Deserialize, Serialize};
@@ -484,12 +484,14 @@ impl Pipeline {
                 }
             }
             (Some(attach_future), Some(import_hook)) => {
+                // This is a bit tricky: We'd like to attach immediately, so users can see logs, but we have to run the health check in the
+                // background as well. However, we can't start importing games until the health check is ok. To do this, we chain the health
+                // check and the import hook as one single future.
                 pb.set_draw_target(ProgressDrawTarget::hidden());
                 tracing::info!("Attaching to MSDE logs..");
-                // Attaching overrides quiet, since we don't want to intercept logs from the container with the progress spinner.
-                if let Err(e) =
-                    tokio::try_join!(attach_future, wait_with_timeout(docker, true), import_hook)
-                {
+                let chained_import_future =
+                    wait_with_timeout(docker, true).and_then(|_| import_hook);
+                if let Err(e) = tokio::try_join!(attach_future, chained_import_future) {
                     tracing::error!(error = %e, "Failed to start MSDE");
                     anyhow::bail!("Failed.");
                 }

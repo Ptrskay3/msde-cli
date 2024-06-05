@@ -22,7 +22,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use msde_cli::{
     cli::{Command, Commands, Target, Web3Kind},
     compose::Pipeline,
-    env::{Context, Feature, PackageLocalConfig},
+    env::{Feature, PackageLocalConfig},
     game::import_games,
     init::ensure_valid_project_path,
     utils, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
@@ -391,15 +391,6 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
-            // Just a utility function to add an artificial delay
-            async fn import_games_future(
-                ctx: &Context,
-                docker: Docker,
-                quiet: bool,
-            ) -> anyhow::Result<()> {
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                import_games(&ctx, docker, quiet).await
-            }
 
             Pipeline::up_from_features(
                 features.as_mut_slice(),
@@ -410,11 +401,7 @@ async fn main() -> anyhow::Result<()> {
                 quiet,
                 build,
                 attach_future,
-                Some(import_games_future(
-                    &ctx,
-                    docker.clone(),
-                    quiet || raw || attach,
-                )),
+                Some(import_games(&ctx, docker.clone(), quiet || raw || attach)),
                 raw,
             )
             .await?;

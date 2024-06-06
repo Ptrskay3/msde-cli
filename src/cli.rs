@@ -80,7 +80,7 @@ pub enum Commands {
         suid: Option<Uuid>,
     },
     /// Import all games from the project directory. This command will look at your active project path in games/stages.yml,
-    /// and will import all valid games listed there. For more information how it works, see https://docs.merigo.co/getting-started/devpackage#using-config-stages.yml
+    /// and will import all valid games listed there. For more information how it works, see <https://docs.merigo.co/getting-started/devpackage#using-config-stages.yml>
     ImportGames {
         /// Don't print output to the terminal.
         #[arg(short, long, action = ArgAction::SetTrue)]
@@ -188,6 +188,10 @@ pub enum Commands {
         /// Start all commands in raw mode, meaning all output is transmitted to the calling terminal without changes.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "quiet")]
         raw: bool,
+
+        /// Skip executing the registered pre and post run hooks.
+        #[arg(long, action = ArgAction::SetTrue)]
+        no_hooks: bool,
     },
     Stop {
         /// The maximum wait duration in seconds for the stop command to finish before exiting with an error.

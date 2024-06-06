@@ -27,6 +27,7 @@ use msde_cli::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
     },
+    hooks::{execute_all, Hooks},
     init::ensure_valid_project_path,
     utils, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
 };
@@ -422,6 +423,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
+
             Pipeline::up_from_features(
                 features.as_mut_slice(),
                 msde_dir,
@@ -456,11 +458,12 @@ async fn main() -> anyhow::Result<()> {
             attach,
             build,
             raw,
+            no_hooks,
         }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            let Some(metadata) = ctx.run_project_checks(self_version)? else {
+            let Some(mut metadata) = ctx.run_project_checks(self_version)? else {
                 anyhow::bail!("No valid active project found");
             };
             let d = docker.clone();
@@ -469,6 +472,17 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
+
+            if !no_hooks {
+                if let Some(hooks) = std::mem::replace(&mut metadata.hooks, None) {
+                    execute_all(hooks.pre_run).context("failed to execute pre-run hook")?;
+
+                    metadata.hooks = Some(Hooks {
+                        pre_run: Vec::new(),
+                        post_run: hooks.post_run,
+                    });
+                }
+            }
 
             Pipeline::up_from_features(
                 features.as_mut_slice(),
@@ -483,6 +497,11 @@ async fn main() -> anyhow::Result<()> {
                 raw,
             )
             .await?;
+            if !no_hooks {
+                if let Some(hooks) = metadata.hooks {
+                    execute_all(hooks.post_run).context("failed to execute post-run hook")?;
+                }
+            }
         }
         Some(Commands::Init {
             path,

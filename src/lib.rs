@@ -3,6 +3,7 @@ pub mod cli;
 pub mod compose;
 pub mod env;
 pub mod game;
+pub mod hooks;
 pub mod init;
 pub mod parsing;
 pub mod updater;

@@ -16,8 +16,11 @@ use std::{
 };
 use strum::Display;
 
-use crate::compose::{
-    DOCKER_COMPOSE_BOT, DOCKER_COMPOSE_METRICS, DOCKER_COMPOSE_OTEL, DOCKER_COMPOSE_WEB3,
+use crate::{
+    compose::{
+        DOCKER_COMPOSE_BOT, DOCKER_COMPOSE_METRICS, DOCKER_COMPOSE_OTEL, DOCKER_COMPOSE_WEB3,
+    },
+    hooks::Hooks,
 };
 
 pub fn home() -> anyhow::Result<PathBuf> {
@@ -238,6 +241,7 @@ pub struct PackageLocalConfig {
     pub target_msde_version: Option<String>,
     pub self_version: String,
     pub timestamp: i64,
+    pub hooks: Option<Hooks>,
 }
 
 // TODO: fields
@@ -377,6 +381,7 @@ impl Context {
                 target_msde_version: Some("3.10.0".into()), // TODO: Do not hardcode
                 self_version: self_version.to_string(),
                 timestamp: time::OffsetDateTime::now_utc().unix_timestamp(),
+                hooks: None,
             },
         )?;
         writer.flush()?;

@@ -268,11 +268,11 @@ pub fn flatten_stage_mapping(
 }
 
 pub async fn import_stages(docker: Docker, stages: &[Stages]) -> anyhow::Result<()> {
-    let requests: Vec<_> = stages
-        .iter()
-        .map(|stage| import_stage(docker.clone(), stage))
-        .collect();
-    futures::future::try_join_all(requests).await?;
+    // Can't really do it concurrently, since it will overwhelm RPC calls like so:
+    // "res was: 10:30:33.852 notice Protocol 'inet_tcp': the name msde_maint_@172.99.0.5 seems to be in use by another Erlang node"
+    for stage in stages {
+        import_stage(docker.clone(), stage).await?;
+    }
 
     Ok(())
 }

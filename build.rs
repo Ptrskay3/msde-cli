@@ -2,7 +2,8 @@ use flate2::{write::GzEncoder, Compression};
 use std::fs::File;
 
 fn main() {
-    println!("cargo:rerun-if-changed=package,template");
+    println!("cargo:rerun-if-changed=package");
+    println!("cargo:rerun-if-changed=template");
     let package = File::create("./compressed_package.tar.gz").unwrap();
     let template = File::create("./compressed_template.tar.gz").unwrap();
     let package_encoder = GzEncoder::new(package, Compression::default());

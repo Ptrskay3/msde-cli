@@ -1,0 +1,4 @@
+{
+    "daily": [ "daily_small", "daily_medium", "daily_large"],
+    "weekly": [ "weekly_small", "weekly_medium", "weekly_large"]
+}

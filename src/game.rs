@@ -291,22 +291,23 @@ async fn import_stage(docker: Docker, stage: &Stages) -> anyhow::Result<()> {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PackageConfigEntry {
-    config: PathBuf,
-    scripts: PathBuf,
-    tuning: PathBuf,
-    disabled: Option<bool>,
+    pub config: PathBuf,
+    pub scripts: PathBuf,
+    pub tuning: PathBuf,
+    pub disabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct PackageStagesConfig(Vec<PackageConfigEntry>);
+pub struct PackageStagesConfig(pub Vec<PackageConfigEntry>);
 
+// TODO: This name is duplicated
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PackageLocalConfig {
-    game: String,
-    stage: String,
-    guid: Uuid,
-    suid: Uuid,
-    launch: bool,
+    pub game: String,
+    pub stage: String,
+    pub guid: Uuid,
+    pub suid: Uuid,
+    pub launch: bool,
 }
 
 // Probably handle these errors gracefully, except the when the project dir is missing (as warnings maybe?)

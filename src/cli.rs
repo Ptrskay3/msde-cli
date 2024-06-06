@@ -7,6 +7,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use docker_api::{conn::TtyChunk, Docker};
 use futures::StreamExt;
+use uuid::Uuid;
 
 use crate::{compose::running_containers, LATEST};
 
@@ -33,7 +34,8 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::Run { .. }
+                Commands::CreateGame { .. }
+                    | Commands::Run { .. }
                     | Commands::ImportGames { .. }
                     | Commands::Rpc { .. }
                     | Commands::Log { .. }
@@ -59,6 +61,24 @@ impl Command {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Create and register a new game from the default template.
+    CreateGame {
+        /// The name of the game.
+        #[arg(short, long)]
+        game: String,
+
+        /// The stage name of the game.
+        #[arg(short, long)]
+        stage: String,
+
+        /// If given, create the game with the given fixed guid, otherwise it'll be random.
+        #[arg(long)]
+        guid: Option<Uuid>,
+
+        /// If given, create the game with the given fixed suid, otherwise it'll be random.
+        #[arg(long)]
+        suid: Option<Uuid>,
+    },
     /// Import all games from the project directory. This command will look at your active project path in games/stages.yml,
     /// and will import all valid games listed there. For more information how it works, see https://docs.merigo.co/getting-started/devpackage#using-config-stages.yml
     ImportGames {

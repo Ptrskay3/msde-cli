@@ -1,0 +1,11 @@
+{
+    "info":         "../info.json",
+    "pg_bank":      "../pg_bank.json",
+    "player":       "../player.json",
+    "large_classes":"large_classes.json",
+    "buffs":        "buffs.csv",
+    "classes":      "classes.csv",
+    "damage_types": "damage_types.csv",
+    "shields":      "shields.csv",
+    "swords":       "swords.csv"
+}

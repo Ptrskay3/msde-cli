@@ -1,0 +1,26 @@
+[
+    {
+        "name": "Daily Small",
+        "amount": 10
+    },
+    {
+        "name": "Daily Medium",
+        "amount": 50
+    },
+    {
+        "name": "Daily Large",
+        "amount": 100
+    },
+    {
+        "name": "Weekly Small",
+        "amount": 100
+    },
+    {
+        "name": "Weekly Medium",
+        "amount": 300
+    },
+    {
+        "name": "Weekly large",
+        "amount": 500
+    }
+]

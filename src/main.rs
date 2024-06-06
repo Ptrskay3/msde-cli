@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::File,
+    fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Write},
     path::PathBuf,
     time::Duration,
@@ -22,14 +22,18 @@ use indicatif::{ProgressBar, ProgressStyle};
 use msde_cli::{
     cli::{Command, Commands, Target, Web3Kind},
     compose::Pipeline,
-    env::{Feature, PackageLocalConfig},
-    game::import_games,
+    env::Feature,
+    game::{
+        import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
+        PackageStagesConfig,
+    },
     init::ensure_valid_project_path,
     utils, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
 };
 use secrecy::{ExposeSecret, Secret};
 use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 #[cfg(debug_assertions)]
 static LOGLEVEL: &str = "msde_cli=trace";
@@ -325,6 +329,57 @@ async fn main() -> anyhow::Result<()> {
                 msde_cli::env::Context::clean(&ctx);
             }
         }
+        Some(Commands::CreateGame {
+            game,
+            stage,
+            guid,
+            suid,
+        }) => {
+            let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
+                anyhow::bail!("project must be set")
+            };
+            let target = msde_dir.join("games").join(&game);
+            if target.exists() {
+                anyhow::bail!(format!("A game with name {game} already exists."))
+            }
+            let mut archive = tar::Archive::new(GzDecoder::new(msde_cli::TEMPLATE));
+            archive.unpack(&target).with_context(|| {
+                format!(
+                    "Failed to initialize a new game at directory `{}`",
+                    target.display()
+                )
+            })?;
+            let local_config_path = target.join("local_config.yml");
+            let local_config = std::fs::read_to_string(&local_config_path)?;
+            let mut local_cfg = serde_yaml::from_str::<GamePackageLocalConfig>(&local_config)?;
+            local_cfg.game = game.clone();
+            local_cfg.stage = stage;
+            local_cfg.guid = guid.unwrap_or_else(|| Uuid::new_v4());
+            local_cfg.suid = suid.unwrap_or_else(|| Uuid::new_v4());
+            let cfg = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(local_config_path)?;
+            let mut writer = BufWriter::new(cfg);
+            serde_yaml::to_writer(&mut writer, &local_cfg)?;
+            writer.flush()?;
+            let stages_path = msde_dir.join("games/stages.yml");
+            let stages = std::fs::read_to_string(&stages_path)?;
+            let mut local_cfg = serde_yaml::from_str::<PackageStagesConfig>(&stages)?;
+            local_cfg.0.push(PackageConfigEntry {
+                config: PathBuf::from(format!("{game}/local_config.yml")),
+                scripts: PathBuf::from(format!("{game}/scripts")),
+                tuning: PathBuf::from(format!("{game}/tuning")),
+                disabled: Some(false),
+            });
+            let cfg = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(stages_path)?;
+            let mut writer = BufWriter::new(cfg);
+            serde_yaml::to_writer(&mut writer, &local_cfg)?;
+            writer.flush()?;
+        }
         Some(Commands::Up {
             mut features,
             timeout,
@@ -537,7 +592,7 @@ async fn main() -> anyhow::Result<()> {
             let f = File::open(config)
                 .context("metadata.json file is missing. Please rerun `msde_cli init`.")?;
             let reader = BufReader::new(f);
-            let PackageLocalConfig {
+            let msde_cli::env::PackageLocalConfig {
                 self_version: project_self_version,
                 ..
             } = serde_json::from_reader(reader)

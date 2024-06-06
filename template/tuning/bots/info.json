@@ -1,0 +1,12 @@
+{
+    "convertCost"   : 5,
+    "convertValue"  : 1,
+    "brickMakeTime" : 30000,
+    "bricksForGems" : 10,
+    "gemsForBricks" : 1,
+    "mineCost"      : 1,
+    "mineTime"      : 30000,
+    "campCost"      : 2,
+    "areaWidth"     : 5,
+    "areaHeight"    : 5
+}

@@ -1,0 +1,505 @@
+{
+    "Printer":
+    {
+        "access":
+        {
+            "game":     true,
+            "player":   true
+        },
+        "commands":
+        [
+            {
+                "display": "Print Debug Msg",
+                "command": "print_debug",
+                "buttonDisplay": "Run",
+                "args":
+                [
+                    {"name" : "text", "display": "text", "default": ""}
+                ]
+            },
+            {
+                "display": "Print Info Msg",
+                "command": "print_info",
+                "buttonDisplay": "Run",
+                "args":
+                [
+                    {"name" : "text", "display": "text", "default": ""}
+                ]
+            },
+            {
+                "display": "Print Warn Msg",
+                "command": "print_warn",
+                "buttonDisplay": "Run",
+                "args":
+                [
+                    {"name" : "text", "display": "text", "default": ""}
+                ]
+            },
+            {
+                "display": "Print Error Msg",
+                "command": "print_error",
+                "buttonDisplay": "Run",
+                "args":
+                [
+                    {"name" : "text", "display": "text", "default": ""}
+                ]
+            },
+            {
+                "display": "Print Msg",
+                "command": "print_msg",
+                "buttonDisplay": "Run",
+                "args":
+                [
+                    {
+                        "name" : "type", 
+                        "display": "type", 
+                        "type": "List",
+                        "values":
+                        [
+                            "debug",
+                            "info",
+                            "warn",
+                            "error"
+                        ],
+                        "default": "debug"
+                    },
+                    {"name" : "text", "display": "text", "default": ""}
+                ]
+            },
+            {
+                "display": "Print Msg Enum",
+                "command": "print_msg_enum",
+                "buttonDisplay": "Run",
+                "args":
+                [
+                    {
+                        "name" : "type", 
+                        "display": "type", 
+                        "type": "KV",
+                        "values":
+                        [
+                            ["debug", "0"],
+                            ["info", "1"],
+                            ["warn", "2"],
+                            ["error", "3"]
+                        ],
+                        "default": "debug"
+                    },
+                    {"name" : "text", "display": "text", "default": ""}
+                ]
+            }
+        ]
+    },
+    "Dynamic Examples":
+    {
+        "access":
+        {
+            "player":   true
+        },
+        "commands":
+        [
+            {
+                "display": "Reward Pack 1",
+                "command": "reward_pack1",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "pack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption1"
+                        },
+                        "default": "daily_small"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 2 Daily",
+                "command": "reward_pack2and3",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "dailyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption2",
+                            "index": "daily"
+                        },
+                        "default": "daily_small"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 2 Weekly",
+                "command": "reward_pack2and3",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "weeklyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption2",
+                            "index": "weekly"
+                        },
+                        "default": "weekly_small"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 3 Daily",
+                "command": "reward_pack2and3",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "dailyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption3",
+                            "index": "daily"
+                        },
+                        "default": "daily_small"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 3 Weekly",
+                "command": "reward_pack2and3",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "weeklyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption3",
+                            "index": "weekly"
+                        },
+                        "default": "weekly_small"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 3 Daily Display",
+                "command": "reward_pack2and3",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "dailyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption3",
+                            "index": "daily",
+                            "displayProperty": "name"
+                        },
+                        "default": "daily_small"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 3 Weekly Display",
+                "command": "reward_pack2and3",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "weeklyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption3",
+                            "index": "weekly",
+                            "displayProperty": "name"
+                        },
+                        "default": "weekly_small"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 4",
+                "command": "reward_pack4",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "pack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption4"
+                        },
+                        "default": "0"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 4 Display",
+                "command": "reward_pack4",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "pack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption4",
+                            "displayProperty": "name"
+                        },
+                        "default": "0"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 5 Daily",
+                "command": "reward_pack5",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "dailyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption5",
+                            "index": "daily"
+                        },
+                        "default": "0"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 5 Weekly",
+                "command": "reward_pack5",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "weeklyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption5",
+                            "index": "weekly"
+                        },
+                        "default": "0"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 5 Daily Display",
+                "command": "reward_pack5",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "dailyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption5",
+                            "index": "daily",
+                            "displayProperty": "name"
+                        },
+                        "default": "0"
+                    }
+                ]
+            },
+            {
+                "display": "Reward Pack 5 Weekly Display",
+                "command": "reward_pack5",
+                "buttonDisplay": "Grant",
+                "args":
+                [
+                    {
+                        "name" : "weeklyPack", 
+                        "display": "Pack", 
+                        "type": "Dynamic",
+                        "source": 
+                        {
+                            "tuning": "DynamicOption5",
+                            "index": "weekly",
+                            "displayProperty": "name"
+                        },
+                        "default": "0"
+                    }
+                ]
+            }
+        ]
+    },
+    "Test Scheduler Commands":
+    {
+        "access":
+        {
+            "game": true
+        },
+        "commands":
+        [
+            {
+                "display": "Trigger action",
+                "command": "triggerAction",
+                "buttonDisplay": "Trigger",
+                "args":
+                [
+                ]
+            },
+            {
+                "display": "Trigger Event",
+                "command": "triggerEvent",
+                "buttonDisplay": "Trigger",
+                "args":
+                [
+                ]
+            }
+        ]
+    },
+    "Announce":
+    {
+        "access":
+        {
+            "game": true
+        },
+        "commands":
+        [
+            {
+                "display": "Let the world know",
+                "command": "announcement",
+                "buttonDisplay": "Send",
+                "args":
+                [
+                    {"name" : "message", "display" : "message", "default" : "hello"}
+                ]
+            },
+            {
+                "display": "Send a Player a Message",
+                "command": "mailsend",
+                "buttonDisplay": "Send",
+                "args":
+                [
+                    {"name" : "pKey", "display" : "pKey", "default" : ""}
+                ]
+            }
+        ]
+    },
+    "Admin Commands":
+    {
+        "access":
+        {
+            "player": true
+        },
+        "commands":
+        [
+            {
+                "display": "Set Player Name",
+                "command": "set_name",
+                "buttonDisplay": "Set",
+                "args":
+                [
+                    {"name": "name", "display":"name", "default":"New Name"}
+                ]
+            },
+            {
+                "display": "Session Len",
+                "command": "session",
+                "buttonDisplay": "Get",
+                "args": []
+            }
+        ]
+    },
+    "Player Commands":
+    {
+        "access":
+        {
+            "player": true
+        },
+        "commands":
+        [
+            {
+                "display": "Modify Ore",
+                "command": "modify_ore",
+                "buttonDisplay": "Modify",
+                "args":
+                [
+                    {"name": "arg0", "display":"amount", "default":"0"}
+                ]
+            },
+            {
+                "display": "Ban Player",
+                "command": "ban_player",
+                "buttonDisplay": "Set",
+                "args": []
+            },
+            {
+                "display": "Block Player",
+                "command": "block_player",
+                "buttonDisplay": "Set",
+                "args": []
+            },
+            {
+                "display": "Active Player",
+                "command": "active_player",
+                "buttonDisplay": "Set",
+                "args": []
+            }
+        ]
+    },
+    "Mail Commands":
+    {
+        "access":
+        {
+            "player": true
+        },
+        "commands":
+        [
+            {
+                "display": "Send Mail",
+                "command": "send_mail",
+                "buttonDisplay": "Send",
+                "args":
+                [
+                    {"name": "subject", "display":"Subject", "default":"Subject"},
+                    {"name": "message", "display":"Message", "default":"Message"}
+                ]
+            },
+            {
+                "display": "Send Ore Reward",
+                "command": "send_mail_reward",
+                "buttonDisplay": "Send Reward",
+                "args":
+                [
+                    {"name": "subject", "display":"Subject", "default":"Gift"},
+                    {"name": "message", "display":"Message", "default":"Look what you got!"},
+                    {"name": "ore", "display":"Ore Count", "default":"10"}
+                ]
+            },
+            {
+                "display": "Process Mail",
+                "command": "mail_process",
+                "buttonDisplay": "Process",
+                "args": [ ]
+            }
+        ]
+    }
+}

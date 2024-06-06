@@ -1,0 +1,12 @@
+{
+    "info":     "info.json",
+    "pg_bank":  "pg_bank.json",
+    "player":   "player.json",
+    "sample":   "sample.csv",
+    "DynamicOption1": "DynamicOption1.json",
+    "DynamicOption2": "DynamicOption2.json",
+    "DynamicOption3": "DynamicOption3.json",
+    "DynamicOption4": "DynamicOption4.json",
+    "DynamicOption5": "DynamicOption5.json",
+    "DynamicOption6": "DynamicOption6.json"
+}

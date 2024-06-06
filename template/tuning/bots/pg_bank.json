@@ -1,0 +1,42 @@
+{
+    "vsn": 1,
+    "currency":
+    [
+        {
+            "name":             "100-gems-pack",
+            "description":      "100 gems to help you go!",
+            "amount":           100,
+            "tracking_cost":    0.99,
+            "platform":
+            {
+                "apple":
+                {
+                    "id": "com.merigo.simple.purchase1",
+                    "price_tier": "tier_1"
+                },
+                "google":
+                {
+                    "id": "test_purchase_google"
+                }   
+            }
+        },
+        {
+            "name":             "200-gems-pack",
+            "description":      "200 gems to help you go!",
+            "amount":           200,
+            "tracking_cost":    1.99,
+            "platform":
+            {
+                "apple":
+                {
+                    "id": "com.merigo.simple.purchase2",
+                    "price_tier": "tier_2"
+                },
+                "google":
+                {
+                    "id": "test_purchase_google2"
+                }   
+            }
+        }
+    ]
+}

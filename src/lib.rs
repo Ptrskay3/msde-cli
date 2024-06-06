@@ -21,4 +21,5 @@ pub const REPOS_AND_IMAGES: &[&str; 5] = &[
     "web3_services/web3_consumer_dev",
 ];
 
-pub static PACKAGE: &[u8] = include_bytes!(env!("COMPRESSED_FILE"));
+pub static PACKAGE: &[u8] = include_bytes!(env!("PACKAGE_COMPRESSED_FILE"));
+pub static TEMPLATE: &[u8] = include_bytes!(env!("TEMPLATE_COMPRESSED_FILE"));

@@ -300,6 +300,19 @@ pub struct PackageConfigEntry {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PackageStagesConfig(pub Vec<PackageConfigEntry>);
 
+impl PackageStagesConfig {
+    /// If the game name is in Self, return the path of the local_config.yml we can fetch the guid from.
+    pub fn try_find_guid_in(&self, game_name: &str) -> Option<&PathBuf> {
+        self.0.iter().find_map(|cfg_entry| {
+            if cfg_entry.config.starts_with(&game_name) {
+                Some(&cfg_entry.config)
+            } else {
+                None
+            }
+        })
+    }
+}
+
 // TODO: This name is duplicated
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PackageLocalConfig {

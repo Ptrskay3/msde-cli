@@ -338,10 +338,13 @@ async fn main() -> anyhow::Result<()> {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
             };
-            let target = msde_dir.join("games").join(&game);
+            let target = msde_dir.join("games").join(&game).join(&stage);
             if target.exists() {
-                anyhow::bail!(format!("A game with name {game} already exists."))
+                anyhow::bail!(format!(
+                    "A game with name combination '{game}/{stage}' already exists."
+                ))
             }
+
             let mut archive = tar::Archive::new(GzDecoder::new(msde_cli::TEMPLATE));
             archive.unpack(&target).with_context(|| {
                 format!(
@@ -349,33 +352,53 @@ async fn main() -> anyhow::Result<()> {
                     target.display()
                 )
             })?;
-            let local_config_path = target.join("local_config.yml");
-            let local_config = std::fs::read_to_string(&local_config_path)?;
-            let mut local_cfg = serde_yaml::from_str::<GamePackageLocalConfig>(&local_config)?;
-            local_cfg.game = game.clone();
-            local_cfg.stage = stage;
-            local_cfg.guid = guid.unwrap_or_else(|| Uuid::new_v4());
-            local_cfg.suid = suid.unwrap_or_else(|| Uuid::new_v4());
-            let cfg = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(local_config_path)?;
-            let mut writer = BufWriter::new(cfg);
-            serde_yaml::to_writer(&mut writer, &local_cfg)?;
-            writer.flush()?;
+
             let stages_path = msde_dir.join("games/stages.yml");
-            let stages = std::fs::read_to_string(&stages_path)?;
-            let mut local_cfg = serde_yaml::from_str::<PackageStagesConfig>(&stages)?;
+            let stages = std::fs::read_to_string(&stages_path)
+                .context("games/stages.yml file doesn't exist, but it should..")?;
+            let mut local_cfg = serde_yaml::from_str::<PackageStagesConfig>(&stages)
+                .context("Failed to deserialize stages.yml")?;
+            let guid = guid.unwrap_or_else(|| {
+                if let Some(existing_local_cfg) = local_cfg.try_find_guid_in(&game) {
+                    if let Ok(local_config) =
+                        std::fs::read_to_string(msde_dir.join("games").join(existing_local_cfg))
+                    {
+                        let local_cfg =
+                            serde_yaml::from_str::<GamePackageLocalConfig>(&local_config)
+                                .expect("local_config.yml is invalid");
+                        local_cfg.guid
+                    } else {
+                        Uuid::new_v4()
+                    }
+                } else {
+                    Uuid::new_v4()
+                }
+            });
             local_cfg.0.push(PackageConfigEntry {
-                config: PathBuf::from(format!("{game}/local_config.yml")),
-                scripts: PathBuf::from(format!("{game}/scripts")),
-                tuning: PathBuf::from(format!("{game}/tuning")),
+                config: PathBuf::from(format!("{game}/{stage}/local_config.yml")),
+                scripts: PathBuf::from(format!("{game}/{stage}/scripts")),
+                tuning: PathBuf::from(format!("{game}/{stage}/tuning")),
                 disabled: Some(false),
             });
             let cfg = OpenOptions::new()
                 .write(true)
                 .truncate(true)
                 .open(stages_path)?;
+            let mut writer = BufWriter::new(cfg);
+            serde_yaml::to_writer(&mut writer, &local_cfg)?;
+            writer.flush()?;
+
+            let local_config_path = target.join("local_config.yml");
+            let local_config = std::fs::read_to_string(&local_config_path)?;
+            let mut local_cfg = serde_yaml::from_str::<GamePackageLocalConfig>(&local_config)?;
+            local_cfg.game = game.clone();
+            local_cfg.stage = stage.clone();
+            local_cfg.guid = guid;
+            local_cfg.suid = suid.unwrap_or_else(|| Uuid::new_v4());
+            let cfg = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(local_config_path)?;
             let mut writer = BufWriter::new(cfg);
             serde_yaml::to_writer(&mut writer, &local_cfg)?;
             writer.flush()?;

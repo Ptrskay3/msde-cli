@@ -34,7 +34,8 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::CreateGame { .. }
+                Commands::RunHooks { .. }
+                    | Commands::CreateGame { .. }
                     | Commands::Run { .. }
                     | Commands::ImportGames { .. }
                     | Commands::Rpc { .. }
@@ -164,20 +165,20 @@ pub enum Commands {
     },
     /// Runs the target service(s), imports all valid games from the project folder.
     /// It has the same effect as the `up` and the `import-games` command combined.
-    /// 
-    /// This command also executes all pre/post-run hooks, if there's any.
-    /// 
+    ///
+    /// This command also executes all pre/post-run hooks, if there are any.
+    ///
     /// ## Hooks
-    /// 
+    ///
     /// Hooks are custom scripts that integrate into this command's lifecycle: pre_run hooks are executed before spinning up
     /// the developer package, and post_run scripts are after. Hooks are executed in the order they're defined.
-    /// 
+    ///
     /// To register a hook, add it to the metadata.json of an active project under the `hooks.pre_run` or `hooks.post_run` keys.
     /// The only required option to define the "cmd" key, that describes which command to execute, but there're also optional keys to
-    /// control other aspects of the command. 
-    /// 
+    /// control other aspects of the command.
+    ///
     /// An example metadata.json with a pre_run hook:
-    /// 
+    ///
     /// {
     ///    "target_msde_version": "3.10.0",
     ///    "self_version": "0.14.0",
@@ -200,17 +201,17 @@ pub enum Commands {
     ///        "post_run": []
     ///    }
     /// }
-    /// 
+    ///
     /// `args`: Additional arguments to pass to the command.
-    /// 
+    ///
     /// `env_overrides`: Environment variables to set for the running command.
-    /// 
+    ///
     /// `working_directory`: The directory to execute the command in. Must be an absolute path.
-    /// 
+    ///
     /// `continue_on_error`: Don't stop the run if this command failed (exited with non-zero code). [default: false]
-    /// 
+    ///
     /// `hide_output`: Don't display the output of this command. [default: false]
-    /// 
+    ///
     /// Any script invoked by the MSDE-CLI tool sets the `MSDE_CLI_RUNNER` environment variable to `true`, so you may rely on that
     /// to distinguish executions.
     Run {
@@ -241,6 +242,15 @@ pub enum Commands {
         /// Skip executing the registered pre and post run hooks.
         #[arg(long, action = ArgAction::SetTrue)]
         no_hooks: bool,
+    },
+    /// Run the defined hooks, if there are any. This command requires at least one of the --pre of --post flag to define which set of
+    /// hooks to execute. See `msde-cli run --help` for further description on hooks.
+    RunHooks {
+        #[arg(long, action = ArgAction::SetTrue, required_unless_present = "post")]
+        pre: bool,
+
+        #[arg(long, action = ArgAction::SetTrue, required_unless_present = "pre")]
+        post: bool,
     },
     Stop {
         /// The maximum wait duration in seconds for the stop command to finish before exiting with an error.

@@ -451,6 +451,20 @@ async fn main() -> anyhow::Result<()> {
             };
             Pipeline::stop_all(&docker, msde_dir, timeout).await?;
         }
+        Some(Commands::RunHooks { pre, post }) => {
+            anyhow::ensure!(ctx.msde_dir.is_some(), "project must be set");
+            let Some(metadata) = ctx.run_project_checks(self_version)? else {
+                anyhow::bail!("No valid active project found");
+            };
+            if let Some(hooks) = metadata.hooks {
+                if pre {
+                    execute_all(hooks.pre_run).context("failed to execute pre-run hook")?;
+                }
+                if post {
+                    execute_all(hooks.post_run).context("failed to execute pre-run hook")?;
+                }
+            }
+        }
         Some(Commands::Run {
             mut features,
             timeout,
@@ -474,7 +488,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             if !no_hooks {
-                if let Some(hooks) = std::mem::replace(&mut metadata.hooks, None) {
+                if let Some(hooks) = std::mem::take(&mut metadata.hooks) {
                     execute_all(hooks.pre_run).context("failed to execute pre-run hook")?;
 
                     metadata.hooks = Some(Hooks {

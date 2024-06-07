@@ -54,9 +54,9 @@ impl ScriptHook {
             cmd = cmd.current_dir(wd);
         }
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("failed to spawn custom script (command was {})", self.cmd))?;
+        let mut child = cmd.spawn().with_context(|| {
+            format!("failed to spawn custom script (command was `{}`)", self.cmd)
+        })?;
 
         let success = child.wait()?.success();
         if success || self.continue_on_failure {

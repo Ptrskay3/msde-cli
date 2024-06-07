@@ -164,17 +164,15 @@ pub enum Commands {
         always_yes: bool,
     },
     /// Runs the target service(s), imports all valid games from the project folder.
-    /// It has the same effect as the `up` and the `import-games` command combined.
-    ///
-    /// This command also executes all pre/post-run hooks, if there are any.
+    /// It has roughly the same effect as the `up` and the `import-games` command combined, with the `run-hooks` command.
     ///
     /// ## Hooks
     ///
     /// Hooks are custom scripts that integrate into this command's lifecycle: pre_run hooks are executed before spinning up
     /// the developer package, and post_run scripts are after. Hooks are executed in the order they're defined.
     ///
-    /// To register a hook, add it to the metadata.json of an active project under the `hooks.pre_run` or `hooks.post_run` keys.
-    /// The only required option to define the "cmd" key, that describes which command to execute, but there're also optional keys to
+    /// To register a hook, add it to the metadata.json of an active project under the `hooks.pre_run` or `hooks.post_run` arrays.
+    /// The only required option is the "cmd" key, that describes which command to execute, but there're also optional keys to
     /// control other aspects of the command.
     ///
     /// An example metadata.json with a pre_run hook:
@@ -244,7 +242,9 @@ pub enum Commands {
         no_hooks: bool,
     },
     /// Run the defined hooks, if there are any. This command requires at least one of the --pre of --post flag to define which set of
-    /// hooks to execute. See `msde-cli run --help` for further description on hooks.
+    /// hooks to execute. This command will run hooks in the order they're defined in (and runs pre before post hooks, obviously).
+    ///
+    /// See `msde-cli run --help` for further description on hooks.
     RunHooks {
         #[arg(long, action = ArgAction::SetTrue, required_unless_present = "post")]
         pre: bool,

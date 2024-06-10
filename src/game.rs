@@ -462,13 +462,16 @@ pub async fn import_games(ctx: &Context, docker: Docker, quiet: bool) -> anyhow:
         return Ok(());
     }
     pb.set_message("🔁 Starting sync..");
-
+    let mut progress_count = 0;
+    let num_of_jobs = id_pairs.len();
     let mut sync_tasks = stream::iter(id_pairs.clone())
         .map(|(guid, suid)| sync_stage_with_ids(docker.clone(), guid, suid));
     let mut sync_job_ids = vec![];
     while let Some(sync_task) = sync_tasks.next().await {
         let (op, guid, suid) = sync_task.await?;
         let op = process_rpc_output(&op);
+        pb.set_message(format!("🔁 Starting sync.. {progress_count}/{}", num_of_jobs));
+        progress_count += 1;
         match parse_simple_tuple(&mut op.as_str()) {
             Ok(ElixirTuple::OkEx(OkVariant::Uuid(uuid))) => sync_job_ids.push((uuid, guid, suid)),
             e => {
@@ -581,11 +584,13 @@ pub async fn import_games(ctx: &Context, docker: Docker, quiet: bool) -> anyhow:
     }
 
     pb.set_message("🚀 Launching stages..");
-
+    let mut progress_count = 0;
     let mut start_tasks =
         stream::iter(id_pairs).map(|(guid, suid)| start_stage_with_ids(docker.clone(), guid, suid));
     let mut success = true;
     while let Some(sync_task) = start_tasks.next().await {
+        pb.set_message(format!("🚀 Launching stages.. {progress_count}/{}", num_of_jobs));
+        progress_count += 1;
         let (op, guid, suid) = sync_task.await?;
         let op = process_rpc_output(&op);
         // FIXME: Parsing this properly is a pain, because we may get output from the Job script like this:

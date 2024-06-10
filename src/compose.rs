@@ -685,11 +685,12 @@ pub async fn wait_with_timeout(docker: &docker_api::Docker, quiet: bool) -> anyh
     tokio::select! {
         _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
             pb.finish_with_message("❌ MSDE health check timed out.");
+            return Err(anyhow::Error::msg("Failed"));
         }
         r = wait_until_heathy(docker, msde_id) => {
             match r {
                 Ok(_) => pb.finish_with_message("✅ MSDE is healthy."),
-                Err(e) => { pb.finish_with_message("❌ MSDE health check failed."); tracing::error!(%e); }
+                Err(e) => { pb.finish_with_message("❌ MSDE health check failed."); tracing::error!(%e); return Err(anyhow::Error::msg(e)); }
             }
         }
     }

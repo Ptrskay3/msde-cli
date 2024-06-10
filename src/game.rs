@@ -470,7 +470,10 @@ pub async fn import_games(ctx: &Context, docker: Docker, quiet: bool) -> anyhow:
     while let Some(sync_task) = sync_tasks.next().await {
         let (op, guid, suid) = sync_task.await?;
         let op = process_rpc_output(&op);
-        pb.set_message(format!("🔁 Starting sync.. {progress_count}/{}", num_of_jobs));
+        pb.set_message(format!(
+            "🔁 Starting sync.. {progress_count}/{}",
+            num_of_jobs
+        ));
         progress_count += 1;
         match parse_simple_tuple(&mut op.as_str()) {
             Ok(ElixirTuple::OkEx(OkVariant::Uuid(uuid))) => sync_job_ids.push((uuid, guid, suid)),
@@ -589,7 +592,10 @@ pub async fn import_games(ctx: &Context, docker: Docker, quiet: bool) -> anyhow:
         stream::iter(id_pairs).map(|(guid, suid)| start_stage_with_ids(docker.clone(), guid, suid));
     let mut success = true;
     while let Some(sync_task) = start_tasks.next().await {
-        pb.set_message(format!("🚀 Launching stages.. {progress_count}/{}", num_of_jobs));
+        pb.set_message(format!(
+            "🚀 Launching stages.. {progress_count}/{}",
+            num_of_jobs
+        ));
         progress_count += 1;
         let (op, guid, suid) = sync_task.await?;
         let op = process_rpc_output(&op);

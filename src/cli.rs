@@ -212,11 +212,11 @@ pub enum Commands {
     ///
     /// Any script invoked by the MSDE-CLI tool sets the `MSDE_CLI_RUNNER` environment variable to `true`, so you may rely on that
     /// to distinguish executions.
-    /// 
+    ///
     /// If you're executing a shell script, it's important that:
-    /// 
+    ///
     /// - it's executable
-    /// 
+    ///
     /// - it starts with an appropriate shebang, for instance: `#!/usr/bin/env bash`
     Run {
         /// The features to enable for this run.

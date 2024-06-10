@@ -6,7 +6,7 @@
 //!   - Decodes this JWT, downloads the images through the service.
 //!   - login, logout via the tokens (maybe allow multiple login profiles, something like AWS)
 //!   - The client SDK probably needs to be in this central service too (we can start as an embedded binary)
-//! 
+//!
 //! This is currently just a sketch.
 #![allow(dead_code)]
 

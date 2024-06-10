@@ -22,7 +22,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use msde_cli::{
     cli::{Command, Commands, Target, Web3Kind},
     compose::Pipeline,
-    env::Feature,
+    env::{Context, Feature},
     game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
     if !&cmd.no_cache {
         match (
             cmd.should_ignore_credentials(),
-            std::fs::File::open(".msde/index.json"),
+            std::fs::File::open(&ctx.config_dir.join("index.json")),
         ) {
             (true, _) => {}
             (_, Ok(content)) => {
@@ -136,14 +136,14 @@ async fn main() -> anyhow::Result<()> {
                     tracing::debug!("image registry cache is too old, rebuilding now.");
                     let credentials = try_login(&ctx)
                         .context("No credentials found, run `msde_cli login` first.")?;
-                    create_index(&client, DEFAULT_DURATION, credentials).await?;
+                    create_index(&ctx, &client, DEFAULT_DURATION, credentials).await?;
                 }
             }
             (_, Err(_)) => {
                 tracing::debug!("image registry cache is not built, building now.");
                 let credentials =
                     try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-                create_index(&client, DEFAULT_DURATION, credentials).await?;
+                create_index(&ctx, &client, DEFAULT_DURATION, credentials).await?;
             }
         }
     }
@@ -172,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("BEAM files verified.");
         }
         Some(Commands::Versions { target }) => {
-            let file = File::open(".msde/index.json")
+            let file = File::open(&ctx.config_dir.join("index.json"))
                 .context("local cache not found, please omit the `--no-cache` flag")?;
             let reader = BufReader::new(file);
             let index: Index = serde_json::from_reader(reader)?;
@@ -191,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::BuildCache { duration }) => {
             let credentials =
                 try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-            create_index(&client, duration.unwrap_or(DEFAULT_DURATION), credentials).await?
+            create_index(&ctx, &client, duration.unwrap_or(DEFAULT_DURATION), credentials).await?
         }
         Some(Commands::Containers { always_yes }) => {
             let opts = ContainerListOpts::builder().all(true).build();
@@ -283,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
                 ]
             });
             if !&cmd.no_cache {
-                target_version_check(&targets)?;
+                target_version_check(&targets, &ctx)?;
             }
             let m = indicatif::MultiProgress::new();
             let mut tasks = vec![];
@@ -931,13 +931,12 @@ fn try_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> 
 }
 
 async fn create_index(
+    ctx: &Context,
     client: &reqwest::Client,
     duration: i64,
     credentials: SecretCredentials,
 ) -> anyhow::Result<()> {
     let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
-    // TODO: Take the config struct into account.
-    std::fs::create_dir_all(".msde").context("Failed to create cache directory")?;
 
     let key = credentials.ghcr_key.expose_secret();
     let registry_requests = REPOS_AND_IMAGES.iter().map(|repo_and_image| {
@@ -994,8 +993,7 @@ async fn create_index(
             .unix_timestamp(),
         content,
     };
-
-    let file = File::create(".msde/index.json")?;
+    let file = File::create(&ctx.config_dir.join("index.json"))?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, &index)?;
     writer.flush()?;
@@ -1133,9 +1131,8 @@ fn progress_bar() -> ProgressBar {
     pb
 }
 
-fn target_version_check(targets: &[Target]) -> anyhow::Result<()> {
-    // TODO: Paths
-    let file = File::open(".msde/index.json")?;
+fn target_version_check(targets: &[Target], ctx: &Context) -> anyhow::Result<()> {
+    let file = File::open(&ctx.config_dir.join("index.json"))?;
     let reader = BufReader::new(file);
     let index: Index = serde_json::from_reader(reader)?;
     for target in targets {

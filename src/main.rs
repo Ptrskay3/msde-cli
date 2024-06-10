@@ -392,10 +392,10 @@ async fn main() -> anyhow::Result<()> {
             let local_config_path = target.join("local_config.yml");
             let local_config = std::fs::read_to_string(&local_config_path)?;
             let mut local_cfg = serde_yaml::from_str::<GamePackageLocalConfig>(&local_config)?;
-            local_cfg.game = game.clone();
-            local_cfg.stage = stage.clone();
+            local_cfg.game.clone_from(&game);
+            local_cfg.stage.clone_from(&stage);
             local_cfg.guid = guid;
-            local_cfg.suid = suid.unwrap_or_else(|| Uuid::new_v4());
+            local_cfg.suid = suid.unwrap_or_else(Uuid::new_v4);
             let cfg = OpenOptions::new()
                 .write(true)
                 .truncate(true)
@@ -837,6 +837,24 @@ struct MetadataResponse {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ErrorResponse {
+    errors: Vec<ApiError>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ApiError {
+    code: String,
+    message: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum ApiResponse {
+    Ok(MetadataResponse),
+    Error(ErrorResponse),
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct ParsedMetadataResponse {
     org: String,
     repository: String,
@@ -931,8 +949,7 @@ async fn create_index(
                 .bearer_auth(key)
                 .send()
                 .await?
-                // TODO: the error response is not considered here. That can happen when you don't have sufficient permissions.
-                .json::<MetadataResponse>()
+                .json::<ApiResponse>()
                 .await
         }
     });
@@ -941,6 +958,13 @@ async fn create_index(
 
     let content = responses
         .into_iter()
+        .filter_map(|response| match response {
+            ApiResponse::Ok(metadata) => Some(metadata),
+            ApiResponse::Error(e) => { 
+                tracing::error!(error = ?e, "Error getting a response");
+                None 
+            }
+        })
         .map(|metadata| {
             let parsed_versions = metadata
                 .tags
@@ -975,7 +999,6 @@ async fn create_index(
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, &index)?;
     writer.flush()?;
-    tracing::debug!("local cache built");
     Ok(())
 }
 

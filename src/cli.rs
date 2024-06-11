@@ -285,8 +285,16 @@ pub enum Commands {
         #[arg(short, long, required_unless_present = "version")]
         version: Option<String>,
     },
-    Ssh,
-    Shell,
+    /// SSH into the running container.
+    Ssh {
+        #[command(subcommand)]
+        target: Target,
+    },
+    /// Attach to the Elixir shell via a remote_console in the running container.
+    Shell {
+        #[command(subcommand)]
+        target: Target,
+    },
     /// Initialize the MSDE developer package.
     ///
     /// This command will not delete any files, but will override anything in the target directory if the package content
@@ -434,6 +442,24 @@ impl Target {
             .get(target)
             .context("Target container is not running")?;
         Ok(container_id.clone())
+    }
+
+    pub fn container_name(&self) -> Option<&str> {
+        match self {
+            Target::Msde { .. } => Some("msde-vm-dev"),
+            Target::Bot { .. } => Some("bot-vm-dev"),
+            Target::Web3 { .. } => None,
+            Target::Compiler { .. } => Some("compiler-vm-dev"),
+        }
+    }
+
+    pub fn container_remote_console_path(&self) -> Option<&str> {
+        match self {
+            Target::Msde { .. } => Some("/usr/local/bin/merigo/msde/bin/msde"),
+            Target::Bot { .. } => Some("/usr/local/bin/merigo/bot/bin/bot"),
+            Target::Web3 { .. } => None,
+            Target::Compiler { .. } => Some("usr/local/bin/merigo/compiler/bin/compiler"),
+        }
     }
 
     pub fn images_and_tags(&self) -> Vec<(String, String)> {

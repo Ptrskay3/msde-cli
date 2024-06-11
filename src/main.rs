@@ -3,6 +3,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Write},
     path::PathBuf,
+    process::Stdio,
     time::Duration,
 };
 
@@ -10,8 +11,6 @@ use anyhow::Context as _;
 use clap::Parser;
 use clap_complete::{generate, shells::Shell};
 use dialoguer::{Confirm, Input};
-// May work better!
-// https://github.com/fussybeaver/bollard
 use docker_api::{
     opts::{ContainerListOpts, ContainerStopOpts},
     Docker,
@@ -191,7 +190,13 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::BuildCache { duration }) => {
             let credentials =
                 try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-            create_index(&ctx, &client, duration.unwrap_or(DEFAULT_DURATION), credentials).await?
+            create_index(
+                &ctx,
+                &client,
+                duration.unwrap_or(DEFAULT_DURATION),
+                credentials,
+            )
+            .await?
         }
         Some(Commands::Containers { always_yes }) => {
             let opts = ContainerListOpts::builder().all(true).build();
@@ -708,6 +713,40 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Log { target }) => {
             target.attach(&docker).await?;
+        }
+        Some(Commands::Ssh { target }) => {
+            let Some(name) = target.container_name() else {
+                anyhow::bail!("Invalid target for command")
+            };
+            let pty = pty_process::blocking::Pty::new()?;
+            pty.resize(pty_process::Size::new(1920, 1080))?;
+            let mut cmd = pty_process::blocking::Command::new("docker");
+            cmd.args(&["exec", "-it", name, "/bin/bash"]);
+            cmd.stdin(Stdio::inherit());
+            cmd.stdout(Stdio::inherit());
+            cmd.stderr(Stdio::inherit());
+            let mut child = cmd.spawn(&pty.pts()?)?;
+            child.wait()?;
+        }
+        Some(Commands::Shell { target }) => {
+            let (name, remote_console_path) = match (
+                target.container_name(),
+                target.container_remote_console_path(),
+            ) {
+                (Some(container_name), Some(remote_console_path)) => {
+                    (container_name, remote_console_path)
+                }
+                _ => anyhow::bail!("Invalid target for command"),
+            };
+            let pty = pty_process::blocking::Pty::new()?;
+            pty.resize(pty_process::Size::new(1920, 1080))?;
+            let mut cmd = pty_process::blocking::Command::new("docker");
+            cmd.args(&["exec", "-it", name, remote_console_path, "remote_console"]);
+            cmd.stdin(Stdio::inherit());
+            cmd.stdout(Stdio::inherit());
+            cmd.stderr(Stdio::inherit());
+            let mut child = cmd.spawn(&pty.pts()?)?;
+            child.wait()?;
         }
         None => {
             tracing::trace!("No subcommand was passed, starting diagnostic..");

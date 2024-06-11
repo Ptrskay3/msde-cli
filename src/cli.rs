@@ -34,7 +34,9 @@ impl Command {
         matches!(
             self.command,
             None | Some(
-                Commands::RunHooks { .. }
+                Commands::Shell { .. }
+                    | Commands::Ssh { .. }
+                    | Commands::RunHooks { .. }
                     | Commands::CreateGame { .. }
                     | Commands::Run { .. }
                     | Commands::ImportGames { .. }

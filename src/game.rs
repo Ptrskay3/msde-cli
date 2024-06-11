@@ -160,6 +160,7 @@ pub async fn get_msde_config(docker: docker_api::Docker) -> anyhow::Result<Vec<S
         .replace("\\\\", "\\");
 
     if !op.ends_with("<> ...") {
+        tracing::trace!(final_json = %op, "MSDE config concat");
         let stages: Vec<Stages> = serde_json::from_str(&op)?;
         return Ok(stages);
     }
@@ -189,6 +190,7 @@ async fn get_msde_config_chunked(docker: docker_api::Docker) -> anyhow::Result<V
 
         // The literal empty string means we've reached the end.
         if next_chunk.trim() == "\"\"" {
+            tracing::trace!(%final_json, "MSDE config concat");
             let stages = serde_json::from_str(&final_json)?;
             return Ok(stages);
         }

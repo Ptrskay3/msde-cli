@@ -156,6 +156,10 @@ pub enum Commands {
         /// Start all commands in raw mode, meaning all output is transmitted to the calling terminal without changes.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "quiet")]
         raw: bool,
+
+        /// The profile to use. This defines which features are enabled. If not given, the minimal profile is used.
+        #[arg(short, long, conflicts_with = "features")]
+        profile: Option<String>,
     },
     /// Wipe out all config files and folders.
     Clean {
@@ -246,6 +250,10 @@ pub enum Commands {
         /// Skip executing the registered pre and post run hooks.
         #[arg(long, action = ArgAction::SetTrue)]
         no_hooks: bool,
+
+        /// The profile to use. This defines which features are enabled. If not given, the minimal profile is used.
+        #[arg(short, long, conflicts_with = "features")]
+        profile: Option<String>,
     },
     /// Run the defined hooks, if there are any. This command requires at least one of the --pre of --post flag to define which set of
     /// hooks to execute. This command will run hooks in the order they're defined in (and runs pre before post hooks, obviously).
@@ -263,6 +271,7 @@ pub enum Commands {
         #[arg(short, long, default_value_t = 300)]
         timeout: u64,
     },
+    // TODO: This is almost the same as `Up`.
     Start,
     /// Stop all running services and remove stored game data by cleaning associated Docker volumes.
     Down {

@@ -66,7 +66,7 @@ impl From<ConfigStatic> for Config {
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 #[serde(transparent)]
-pub struct Profiles(HashMap<String, Vec<Feature>>);
+pub struct Profiles(pub HashMap<String, Vec<Feature>>);
 
 impl Default for Profiles {
     fn default() -> Self {

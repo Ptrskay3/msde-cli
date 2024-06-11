@@ -28,7 +28,8 @@ use msde_cli::{
     },
     hooks::{execute_all, Hooks},
     init::ensure_valid_project_path,
-    utils, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
+    utils::{self, resolve_features},
+    DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
 };
 use secrecy::{ExposeSecret, Secret};
 use sysinfo::System;
@@ -410,12 +411,13 @@ async fn main() -> anyhow::Result<()> {
             writer.flush()?;
         }
         Some(Commands::Up {
-            mut features,
+            features,
             timeout,
             quiet,
             attach,
             build,
             raw,
+            profile,
         }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
@@ -428,6 +430,8 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
+
+            let mut features = resolve_features(features, profile, &ctx);
 
             Pipeline::up_from_features(
                 features.as_mut_slice(),
@@ -471,13 +475,14 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Some(Commands::Run {
-            mut features,
+            features,
             timeout,
             quiet,
             attach,
             build,
             raw,
             no_hooks,
+            profile,
         }) => {
             let Some(msde_dir) = &ctx.msde_dir.as_ref() else {
                 anyhow::bail!("project must be set")
@@ -485,6 +490,9 @@ async fn main() -> anyhow::Result<()> {
             let Some(mut metadata) = ctx.run_project_checks(self_version)? else {
                 anyhow::bail!("No valid active project found");
             };
+
+            let mut features = resolve_features(features, profile, &ctx);
+
             let d = docker.clone();
             let attach_future = if attach {
                 Some(Target::Msde { version: None }.attach(&d))

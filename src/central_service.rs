@@ -16,6 +16,7 @@ use anyhow::Context;
 use reqwest::header::{HeaderMap, HeaderName};
 
 pub static X_MSDE_CLI_VERSION: HeaderName = HeaderName::from_static("x-msde-cli-version");
+static X_ACCESS_TOKEN: HeaderName = HeaderName::from_static("x-access-token");
 
 #[derive(Clone)]
 pub struct MerigoApiClient {
@@ -48,22 +49,27 @@ impl MerigoApiClient {
         }
     }
 
-    // This is probably how we'd like to setup callable endpoints..
-    pub async fn endpoint(&self, parameter: &str) -> anyhow::Result<()> {
-        let url = format!("{}/url/{parameter}", self.api_url);
+    #[cfg(all(feature = "local_auth", debug_assertions))]
+    pub async fn register(&self, name: &str) -> anyhow::Result<String> {
+        let url = format!("{}/register", self.api_url);
 
         #[derive(serde::Deserialize)]
-        struct Response {}
+        struct TokenResponse {
+            token: String,
+        }
 
-        self.client
-            .get(url)
+        let token = self
+            .client
+            .post(url)
+            .json(&serde_json::json!({"name": name}))
             .send()
             .await
             .context("call endpoint")?
-            .json::<Response>()
+            .json::<TokenResponse>()
             .await
-            .context("parse response")?;
+            .context("parse response")?
+            .token;
 
-        Ok(())
+        Ok(token)
     }
 }

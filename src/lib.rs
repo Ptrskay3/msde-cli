@@ -5,6 +5,8 @@ pub mod env;
 pub mod game;
 pub mod hooks;
 pub mod init;
+#[cfg(all(feature = "local_auth", debug_assertions))]
+pub mod local_auth;
 pub mod parsing;
 pub mod updater;
 pub mod utils;

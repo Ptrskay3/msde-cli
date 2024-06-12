@@ -44,6 +44,14 @@ backoff = "0.4.0"
 dotenvy = "0.15.7"
 thiserror = "1.0.61"
 pty-process = "0.4.0"
+axum = { version = "0.7", optional = true }
+tower = { version = "0.4", optional = true }
+tower-http = { version = "0.5.2", optional = true, features = ["trace"] }
+jsonwebtoken = { version = "9.3", optional = true }
+
+[features]
+local_auth = ["axum", "tower-http", "tower", "jsonwebtoken"]
+default = []
 
 [build-dependencies]
 flate2 = "1.0"

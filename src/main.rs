@@ -19,17 +19,10 @@ use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use msde_cli::{
-    cli::{Command, Commands, Target, Web3Kind},
-    compose::Pipeline,
-    env::{Context, Feature},
-    game::{
+    central_service::MerigoApiClient, cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Context, Feature}, game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
-    },
-    hooks::{execute_all, Hooks},
-    init::ensure_valid_project_path,
-    utils::{self, resolve_features},
-    DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
+    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, local_auth, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER
 };
 use secrecy::{ExposeSecret, Secret};
 use sysinfo::System;
@@ -756,6 +749,16 @@ async fn main() -> anyhow::Result<()> {
             let mut child = cmd.spawn(&pty.pts()?)?;
             child.wait()?;
         }
+        #[cfg(all(feature = "local_auth", debug_assertions))]
+        Some(Commands::RunAuthServer) => {
+            local_auth::run_local_auth_server().await?;
+        },
+        #[cfg(all(feature = "local_auth", debug_assertions))]
+        Some(Commands::Register { name }) => {
+            let client = MerigoApiClient::new(String::from("http://localhost:8765"), None, self_version.to_string());
+            let token = client.register(&name).await?;
+            println!("Token is {token}");
+        },
         None => {
             tracing::trace!("No subcommand was passed, starting diagnostic..");
             let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();
@@ -1040,7 +1043,7 @@ async fn create_index(
             .unix_timestamp(),
         content,
     };
-    let file = File::create(&ctx.config_dir.join("index.json"))?;
+    let file = File::create(ctx.config_dir.join("index.json"))?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, &index)?;
     writer.flush()?;
@@ -1179,7 +1182,7 @@ fn progress_bar() -> ProgressBar {
 }
 
 fn target_version_check(targets: &[Target], ctx: &Context) -> anyhow::Result<()> {
-    let file = File::open(&ctx.config_dir.join("index.json"))?;
+    let file = File::open(ctx.config_dir.join("index.json"))?;
     let reader = BufReader::new(file);
     let index: Index = serde_json::from_reader(reader)?;
     for target in targets {

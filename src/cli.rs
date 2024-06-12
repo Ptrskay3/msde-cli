@@ -64,6 +64,13 @@ impl Command {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    #[cfg(all(feature = "local_auth", debug_assertions))]
+    RunAuthServer,
+    #[cfg(all(feature = "local_auth", debug_assertions))]
+    Register {
+        #[arg(short, long)]
+        name: String,
+    },
     /// Create and register a new game from the default template.
     CreateGame {
         /// The name of the game.

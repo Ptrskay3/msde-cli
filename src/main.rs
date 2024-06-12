@@ -19,11 +19,14 @@ use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use msde_cli::{
-    central_service::MerigoApiClient, cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Context, Feature}, game::{
+     cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Context, Feature}, game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
-    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, local_auth, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER
+    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER
 };
+#[cfg(all(feature = "local_auth", debug_assertions))]
+use msde_cli::{local_auth, central_service::MerigoApiClient};
+
 use secrecy::{ExposeSecret, Secret};
 use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

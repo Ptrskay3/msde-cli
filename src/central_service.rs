@@ -12,6 +12,7 @@
 
 use std::{collections::HashMap, time::Duration};
 
+#[cfg(all(feature = "local_auth", debug_assertions))]
 use anyhow::Context;
 use reqwest::header::{HeaderMap, HeaderName};
 

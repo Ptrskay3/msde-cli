@@ -762,6 +762,12 @@ async fn main() -> anyhow::Result<()> {
             let token = client.register(&name).await?;
             println!("Token is {token}");
         },
+        #[cfg(all(feature = "local_auth", debug_assertions))]
+        Some(Commands::Login2 { token }) => {
+            let client = MerigoApiClient::new(String::from("http://localhost:8765"), None, self_version.to_string());
+            let name = client.login(&token).await?;
+            println!("name is {name}");
+        },
         None => {
             tracing::trace!("No subcommand was passed, starting diagnostic..");
             let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();

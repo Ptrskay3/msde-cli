@@ -1,15 +1,17 @@
 use anyhow::Context;
 use axum::{
     async_trait,
-    extract::{FromRef, FromRequestParts, State},
+    extract::{FromRef, FromRequestParts},
     http::{request::Parts, HeaderName, HeaderValue},
     routing::{get, post},
     Json, Router,
 };
 use jsonwebtoken::{DecodingKey, TokenData, Validation};
 use reqwest::StatusCode;
+use serde::Deserialize;
 use std::{
-    collections::HashMap,
+    collections::HashSet,
+    io::Read,
     sync::{Arc, Mutex, OnceLock},
 };
 use time::OffsetDateTime;
@@ -25,12 +27,21 @@ const X_ACCESS_TOKEN: HeaderName = HeaderName::from_static("x-access-token");
 
 #[derive(Clone)]
 pub struct AppState {
-    pub users: Arc<Mutex<HashMap<String, String>>>,
+    pub authorized_tokens: Arc<Mutex<HashSet<String>>>,
 }
 
 pub async fn run_local_auth_server() -> anyhow::Result<()> {
+    let mut s = String::new();
+    let mut f = std::fs::File::open("local_authorized_tokens.json")?;
+    f.read_to_string(&mut s)?;
+    #[derive(Deserialize)]
+    struct BuiltInKeys {
+        tokens: HashSet<String>,
+    }
+
+    let built_in_keys: BuiltInKeys = serde_json::from_str(&s)?;
     let app_state = AppState {
-        users: Arc::new(Mutex::new(HashMap::new())),
+        authorized_tokens: Arc::new(Mutex::new(built_in_keys.tokens)),
     };
     let router = Router::<AppState>::new()
         .route("/register", post(register_client))
@@ -38,7 +49,9 @@ pub async fn run_local_auth_server() -> anyhow::Result<()> {
         .layer(tower::ServiceBuilder::new().layer(TraceLayer::new_for_http()))
         .with_state(app_state);
 
-    let listener = TcpListener::bind("0.0.0.0:8765").await.unwrap();
+    let addr = "0.0.0.0:8765";
+    let listener = TcpListener::bind(addr).await.unwrap();
+    tracing::info!(%addr, "local auth server started");
     axum::serve(listener, router)
         .await
         .context("failed to start the server")
@@ -69,11 +82,17 @@ impl AuthUser {
         .expect("HMAC signing should be infallible")
     }
 
-    pub fn from_authorization(auth_header: &HeaderValue) -> anyhow::Result<String> {
+    pub fn from_authorization(
+        auth_header: &HeaderValue,
+        authorized_tokens: &Arc<Mutex<HashSet<String>>>,
+    ) -> anyhow::Result<String> {
         let token = auth_header.to_str().map_err(|_| {
             tracing::debug!("Authorization header is not UTF-8");
             anyhow::Error::msg("unauthorized")
         })?;
+        if authorized_tokens.lock().unwrap().contains(token) {
+            return Ok(String::from("local-built-in-user"));
+        }
 
         let decoding = DecodingKey::from_secret(HMAC_KEY.as_bytes());
         let validation = Validation::new(jsonwebtoken::Algorithm::HS256);
@@ -95,14 +114,14 @@ struct Token {
     token: String,
 }
 
-async fn register_client(
-    State(state): State<AppState>,
-    Json(auth_user): Json<AuthUser>,
-) -> Json<Token> {
+async fn register_client(Json(auth_user): Json<AuthUser>) -> Json<Token> {
     let token = auth_user.to_jwt();
-    let mut users = state.users.lock().unwrap();
-    users.insert(token.clone(), auth_user.name);
     Json(Token { token })
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+pub struct ErrorResponse {
+    error: String,
 }
 
 #[async_trait]
@@ -111,16 +130,28 @@ where
     S: Send + Sync,
     AppState: FromRef<S>,
 {
-    type Rejection = (StatusCode, String);
+    type Rejection = (StatusCode, Json<ErrorResponse>);
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         if let Some(access_token) = parts.headers.get(X_ACCESS_TOKEN) {
-            let _app_state = AppState::from_ref(state);
-            let name = AuthUser::from_authorization(access_token)
-                .map_err(|_| (StatusCode::BAD_REQUEST, "invalid token".to_string()))?;
+            let state = AppState::from_ref(state);
+            let name = AuthUser::from_authorization(access_token, &state.authorized_tokens)
+                .map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: "invalid token".to_string(),
+                        }),
+                    )
+                })?;
             Ok(AuthUser { name })
         } else {
-            Err((StatusCode::UNAUTHORIZED, "unauthorized".into()))
+            Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "unauthorized".to_string(),
+                }),
+            ))
         }
     }
 }

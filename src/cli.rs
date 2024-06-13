@@ -67,7 +67,7 @@ pub enum Commands {
     #[cfg(all(feature = "local_auth", debug_assertions))]
     RunAuthServer,
     #[cfg(all(feature = "local_auth", debug_assertions))]
-    Login2 {
+    LoginDev {
         #[arg(short, long)]
         token: String,
     },

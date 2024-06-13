@@ -1,7 +1,20 @@
-# Requires
+# MSDE-CLI
+
+### Local development
+
+For local development, you may start the local auth server in a different terminal:
+
+```sh
+RUST_LOG=msde_cli=debug,tower_http=debug cargo r -F local_auth -- run-auth-server
+```
+This handles the authentication part locally, so the real central service can be avoided.
+
+
+### Requires
   - docker compose >=2.20
 
-## TODO:
+### TODO:
+  - Deprecate the old `credentials.json` the central service is ready.
   - `status` subcommand to summarize the current state of the configuration and system
   - To embed the commit sha, it's the best to use `https://crates.io/crates/vergen` probably.
   - Preserve the stages.yml file on upgrade.

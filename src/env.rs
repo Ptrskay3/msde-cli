@@ -8,6 +8,7 @@
 
 use anyhow::Context as _;
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
@@ -244,9 +245,10 @@ pub struct PackageLocalConfig {
     pub hooks: Option<Hooks>,
 }
 
-// TODO: fields
-#[derive(Debug)]
-pub struct Authorization;
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Authorization {
+    pub token: String,
+}
 
 impl Context {
     pub fn from_env() -> anyhow::Result<Self> {

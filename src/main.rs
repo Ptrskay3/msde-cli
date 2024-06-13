@@ -18,14 +18,21 @@ use docker_api::{
 use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
+#[cfg(all(feature = "local_auth", debug_assertions))]
+use msde_cli::{central_service::MerigoApiClient, local_auth, env::Authorization};
 use msde_cli::{
-     cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Context, Feature}, game::{
+    cli::{Command, Commands, Target, Web3Kind},
+    compose::Pipeline,
+    env::{Context, Feature},
+    game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
-    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER
+    },
+    hooks::{execute_all, Hooks},
+    init::ensure_valid_project_path,
+    utils::{self, resolve_features},
+    DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
 };
-#[cfg(all(feature = "local_auth", debug_assertions))]
-use msde_cli::{local_auth, central_service::MerigoApiClient};
 
 use secrecy::{ExposeSecret, Secret};
 use sysinfo::System;
@@ -755,19 +762,36 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(all(feature = "local_auth", debug_assertions))]
         Some(Commands::RunAuthServer) => {
             local_auth::run_local_auth_server().await?;
-        },
+        }
         #[cfg(all(feature = "local_auth", debug_assertions))]
         Some(Commands::Register { name }) => {
-            let client = MerigoApiClient::new(String::from("http://localhost:8765"), None, self_version.to_string());
+            let client = MerigoApiClient::new(
+                String::from("http://localhost:8765"),
+                None,
+                self_version.to_string(),
+            );
             let token = client.register(&name).await?;
             println!("Token is {token}");
-        },
+        }
         #[cfg(all(feature = "local_auth", debug_assertions))]
-        Some(Commands::Login2 { token }) => {
-            let client = MerigoApiClient::new(String::from("http://localhost:8765"), None, self_version.to_string());
+        Some(Commands::LoginDev { token }) => {
+            let client = MerigoApiClient::new(
+                String::from("http://localhost:8765"),
+                None,
+                self_version.to_string(),
+            );
             let name = client.login(&token).await?;
-            println!("name is {name}");
-        },
+            let auth = ctx.config_dir.join("auth.json");
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(auth)?;
+            let writer = BufWriter::new(f);
+            serde_json::to_writer(writer, &Authorization { token })?;
+
+            tracing::info!("Authenticated as `{name}`.");
+        }
         None => {
             tracing::trace!("No subcommand was passed, starting diagnostic..");
             let version_re = regex::Regex::new(r"\d+\.\d+\.\d+$").unwrap();

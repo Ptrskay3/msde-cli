@@ -274,6 +274,20 @@ impl Context {
                 None
             }
         };
+        let authorization = {
+            let auth_file = config_dir.join("auth.json");
+            if let Ok(f) = fs::read_to_string(auth_file) {
+                match serde_json::from_str(&f) {
+                    Ok(config) => Some(config),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "auth file seems to be broken.");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
         let msde_dir = msde_dir(config.as_ref()).ok();
 
         Ok(Self {
@@ -281,7 +295,7 @@ impl Context {
             config_dir,
             msde_dir,
             version: None,
-            authorization: None,
+            authorization,
             config,
         })
     }

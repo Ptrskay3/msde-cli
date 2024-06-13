@@ -397,7 +397,10 @@ impl Context {
                 target_msde_version: Some("3.10.0".into()), // TODO: Do not hardcode
                 self_version: self_version.to_string(),
                 timestamp: time::OffsetDateTime::now_utc().unix_timestamp(),
-                hooks: None,
+                hooks: Some(Hooks {
+                    pre_run: vec![],
+                    post_run: vec![],
+                }),
             },
         )?;
         writer.flush()?;

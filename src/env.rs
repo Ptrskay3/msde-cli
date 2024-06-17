@@ -412,6 +412,9 @@ impl Context {
         self.msde_dir = Some(project_path.as_ref().to_path_buf())
     }
 
+    // This is used in too many places, so probably don't print errors from here.
+    // TODO: This is doing too much all at once: we'll need a function that only tries to parse the PackageLocalConfig, and another
+    // to run the checks against that separately.
     pub fn run_project_checks(
         &self,
         self_version: semver::Version,
@@ -419,7 +422,7 @@ impl Context {
         let Some(msde_dir) = self.msde_dir.as_ref() else {
             return Ok(None);
         };
-        let metadata_file = msde_dir.join("./metadata.json");
+        let metadata_file = msde_dir.join(METADATA_JSON);
 
         let f = fs::read_to_string(metadata_file)?;
 

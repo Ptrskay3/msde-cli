@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{env::Feature, game::rpc};
+use crate::{env::Feature, game::rpc, MERIGO_UPSTREAM_VERSION};
 use anyhow::Context as _;
 use docker_api::{
     opts::{ContainerRemoveOpts, ExecCreateOpts},
@@ -96,7 +96,7 @@ impl Compose {
             .args(files)
             .arg("start")
             .args(opts.into_args())
-            .env("VSN", "3.10.0") // TODO: Do not hardcode
+            .env("VSN", MERIGO_UPSTREAM_VERSION) // TODO: Use the same logic as for UpdateBeamFiles to determine the version.
             .spawn()
             .map_err(Into::into)
     }
@@ -131,7 +131,7 @@ impl Compose {
             .args(files)
             .arg("up")
             .args(opts.into_args())
-            .env("VSN", "3.10.0") // TODO: Do not hardcode
+            .env("VSN", MERIGO_UPSTREAM_VERSION) // TODO: Use the same logic as for UpdateBeamFiles to determine the version.
             .spawn()
             .map_err(Into::into)
     }

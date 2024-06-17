@@ -148,7 +148,17 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::UpdateBeamFiles {
             version, no_verify, ..
         }) => {
-            let version = version.unwrap_or(upstream_version);
+            let version = version.or_else(|| {
+                if let Ok(Some(metadata)) = ctx.run_project_checks(self_version) {
+                    if let Some(Ok(target_msde_version)) = metadata.target_msde_version.map(|s| semver::Version::parse(&s)) {
+                        Some(target_msde_version)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }).unwrap_or(upstream_version);
 
             msde_cli::updater::update_beam_files(&ctx, version.clone(), no_verify).await?;
             tracing::info!("BEAM files updated to version `{version}`.");

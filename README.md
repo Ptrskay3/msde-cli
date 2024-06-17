@@ -12,7 +12,7 @@ This handles the authentication part locally, so the real central service can be
 ### Release checklist
 
 Before making a new release, ensure that:
-- If you change __ANY__ of the `struct`s or `enums` that derives (De)/Serialize, ensure that it's backward compatible or you provide a migration
+- If you change __ANY__ of the `struct`s or `enum`s that derives `serde::(De)/Serialize`, ensure that it's backward compatible or you provide a migration
  mechanism, so people using older versions don't need to wipe out their existing configs.
 - Fill out the package upgrade matrix (only if you changed anything the `package` folder, and it needs special care instead of a simple override).
 - Bump the version in `Cargo.toml`

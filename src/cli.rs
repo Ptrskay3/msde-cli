@@ -354,7 +354,8 @@ pub enum Commands {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
     },
-    /// Update the BEAM files.
+    /// Update the BEAM files. `version`, if not given, is determined by the active project `metadata.json`'s version. If that's not present
+    /// either, then the upstream Merigo version is used (only updated when this tool is updated).
     UpdateBeamFiles {
         /// The version of the BEAM files to download.
         #[arg(short, long)]

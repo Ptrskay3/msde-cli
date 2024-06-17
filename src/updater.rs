@@ -89,6 +89,7 @@ pub async fn update_beam_files(
     version: semver::Version,
     no_verify: bool,
 ) -> anyhow::Result<()> {
+    const MERIGO_EXTENSION_TMP_ZIP: &str = "merigo-extension-tmp.zip";
     let Some(msde_dir) = ctx.msde_dir.as_ref() else {
         anyhow::bail!("No active project found.");
     };
@@ -104,11 +105,11 @@ pub async fn update_beam_files(
 
     let body = response.bytes().await?;
 
-    let mut tmp_file = File::create(msde_dir.join("merigo-extension-tmp.zip"))?;
+    let mut tmp_file = File::create(msde_dir.join(MERIGO_EXTENSION_TMP_ZIP))?;
     io::copy(&mut body.as_ref(), &mut tmp_file)?;
     tracing::trace!(path = ?msde_dir, "extracting zip");
     zip_extract(
-        &msde_dir.join("merigo-extension-tmp.zip"),
+        &msde_dir.join(MERIGO_EXTENSION_TMP_ZIP),
         &msde_dir.join("merigo-extension-tmp"),
     )?;
     if !no_verify {
@@ -127,7 +128,7 @@ pub async fn update_beam_files(
     )?;
     tracing::trace!("Removing temporal zip.");
 
-    std::fs::remove_file(msde_dir.join("merigo-extension-tmp.zip"))?;
+    std::fs::remove_file(msde_dir.join(MERIGO_EXTENSION_TMP_ZIP))?;
     tracing::trace!("Done.");
     Ok(())
 }

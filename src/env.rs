@@ -22,7 +22,7 @@ use crate::{
         DOCKER_COMPOSE_BOT, DOCKER_COMPOSE_METRICS, DOCKER_COMPOSE_OTEL, DOCKER_COMPOSE_WEB3,
     },
     hooks::Hooks,
-    MERIGO_UPSTREAM_VERSION,
+    CONFIG_JSON, MERIGO_UPSTREAM_VERSION, METADATA_JSON,
 };
 
 pub fn home() -> anyhow::Result<PathBuf> {
@@ -262,7 +262,7 @@ impl Context {
             )
         })?;
         let config = {
-            let config_file = config_dir.join("config.json");
+            let config_file = config_dir.join(CONFIG_JSON);
             if let Ok(f) = fs::read_to_string(config_file) {
                 match serde_json::from_str(&f) {
                     Ok(config) => Some(config),
@@ -311,7 +311,7 @@ impl Context {
 
     // If the file is broken (maybe it uses the older scheme) this function handles that migration part too.
     pub fn write_profiles(&self, name: String, features: Vec<Feature>) -> anyhow::Result<()> {
-        let config_file = self.config_dir.join("config.json");
+        let config_file = self.config_dir.join(CONFIG_JSON);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .read(true)
@@ -357,7 +357,7 @@ impl Context {
 
     pub fn write_config(&self, project_path: PathBuf) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
-        let config_file = self.config_dir.join("config.json");
+        let config_file = self.config_dir.join(CONFIG_JSON);
         let f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -383,7 +383,7 @@ impl Context {
             .as_ref()
             .context("Package location is unknown")?;
         std::fs::create_dir_all(msde_dir)?;
-        let config_file = msde_dir.join("metadata.json");
+        let config_file = msde_dir.join(METADATA_JSON);
         let f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)

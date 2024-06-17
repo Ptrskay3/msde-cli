@@ -21,17 +21,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 #[cfg(all(feature = "local_auth", debug_assertions))]
 use msde_cli::{central_service::MerigoApiClient, local_auth, env::Authorization};
 use msde_cli::{
-    cli::{Command, Commands, Target, Web3Kind},
-    compose::Pipeline,
-    env::{Context, Feature},
-    game::{
+    cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Context, Feature}, game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
-    },
-    hooks::{execute_all, Hooks},
-    init::ensure_valid_project_path,
-    utils::{self, resolve_features},
-    DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
+    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON, REPOS_AND_IMAGES, USER
 };
 
 use secrecy::{ExposeSecret, Secret};
@@ -165,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
 
             let Some(path) = path.or_else(|| {
                 ctx.msde_dir
-                    .map(|msde_dir| msde_dir.join("merigo-extension"))
+                    .map(|msde_dir| msde_dir.join(MERIGO_EXTENSION))
             }) else {
                 anyhow::bail!(
                     "No path found to merigo extension. Please specify the --path argument."
@@ -660,7 +653,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             // TODO: These checks are already implemented elsewhere.
             tracing::debug!(path = %project_path.display(), "Upgrade project at");
-            let config = project_path.join("metadata.json");
+            let config = project_path.join(METADATA_JSON);
             let f = File::open(config)
                 .context("metadata.json file is missing. Please rerun `msde_cli init`.")?;
             let reader = BufReader::new(f);

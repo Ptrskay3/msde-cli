@@ -5,6 +5,7 @@ use std::path::Path;
 use zip_extensions::*;
 
 use crate::env::Context;
+use crate::MERIGO_EXTENSION;
 
 pub fn md5_update_from_dir(directory: &Path, mut hash: Md5) -> io::Result<Md5> {
     assert!(directory.is_dir());
@@ -115,10 +116,10 @@ pub async fn update_beam_files(
     }
     tracing::trace!("Copying BEAM files to their real destination..");
     // Ignoring the error, because it may not exist.
-    let _ = std::fs::remove_dir_all(msde_dir.join("merigo-extension"));
+    let _ = std::fs::remove_dir_all(msde_dir.join(MERIGO_EXTENSION));
     fs_extra::move_items(
         &[msde_dir.join("merigo-extension-tmp")],
-        msde_dir.join("merigo-extension"),
+        msde_dir.join(MERIGO_EXTENSION),
         &fs_extra::dir::CopyOptions {
             copy_inside: true,
             ..Default::default()

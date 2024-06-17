@@ -13,6 +13,10 @@ pub mod utils;
 
 pub const LATEST: &str = "latest";
 pub const USER: &str = "merigo-client";
+pub const METADATA_JSON: &str = "metadata.json";
+pub const CONFIG_JSON: &str = "config.json";
+pub const MERIGO_EXTENSION: &str = "merigo-extension";
+
 pub const DEFAULT_DURATION: i64 = 12;
 pub const MERIGO_UPSTREAM_VERSION: &str = env!("MERIGO_UPSTREAM_VERSION");
 

@@ -175,7 +175,7 @@ pub enum Commands {
         #[arg(short, long, conflicts_with = "features")]
         profile: Option<String>,
     },
-    /// Wipe out all config files and folders.
+    /// Wipe out all config files related to this tool.
     Clean {
         /// Continue without asking for further confirmation.
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]

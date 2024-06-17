@@ -22,6 +22,7 @@ use crate::{
         DOCKER_COMPOSE_BOT, DOCKER_COMPOSE_METRICS, DOCKER_COMPOSE_OTEL, DOCKER_COMPOSE_WEB3,
     },
     hooks::Hooks,
+    MERIGO_UPSTREAM_VERSION,
 };
 
 pub fn home() -> anyhow::Result<PathBuf> {
@@ -394,7 +395,7 @@ impl Context {
         serde_json::to_writer(
             &mut writer,
             &PackageLocalConfig {
-                target_msde_version: Some("3.10.0".into()), // TODO: Do not hardcode
+                target_msde_version: Some(MERIGO_UPSTREAM_VERSION.to_string()),
                 self_version: self_version.to_string(),
                 timestamp: time::OffsetDateTime::now_utc().unix_timestamp(),
                 hooks: Some(Hooks {

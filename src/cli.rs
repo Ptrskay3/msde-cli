@@ -190,7 +190,9 @@ pub enum Commands {
         always_yes: bool,
     },
     /// Runs the target service(s), imports all valid games from the project folder.
-    /// It has roughly the same effect as the `up` and the `import-games` command combined, with the `run-hooks` command.
+    /// It the same effect as the following commands combined:
+    /// 
+    /// `msde-cli run-hooks --pre && msde-cli up [args] && msde-cli import-games && msde-cli run-hooks --post`
     ///
     /// ## Hooks
     ///

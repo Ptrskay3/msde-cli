@@ -774,13 +774,13 @@ async fn main() -> anyhow::Result<()> {
             };
             #[cfg(all(feature = "local_auth", debug_assertions))]
             let client = MerigoApiClient::new(
-                String::from("http://localhost:8765"),
+                std::env::var("MERIGO_AUTH_URL").unwrap_or_else(|_| String::from("http://localhost:8765")),
                 None,
                 self_version.to_string(),
             );
             #[cfg(not(debug_assertions))]
             let client = MerigoApiClient::new(
-                String::from("https://production_url.com"),
+                std::env::var("MERIGO_AUTH_URL").unwrap_or_else(|_| String::from("https://production_url.com")),
                 None,
                 self_version.to_string(),
             );

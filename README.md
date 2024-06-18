@@ -18,6 +18,20 @@ Before making a new release, ensure that:
 - Bump the version in `Cargo.toml`
 - Check `MERIGO_UPSTREAM_VERSION` in `.cargo/config.toml` and bump it if necessary.
 
+### Environment variables
+
+This is a list of existing environment variables that alter the behavior of the CLI tool.
+
+`MERIGO_AUTH_URL`: Connect to this url for authentication. Useful for local development to override the production URL in builds. The local server is at `http://localhost:8765`.
+
+`MERIGO_UPSTREAM_VERSION`: The current upstream version of the siab_app when this tool was built. This is a compile-time variable.
+
+`MERIGO_TOKEN`: The token used for authentication. Currently only used for the `login` command, but all subcommand will accept this in the future. It'll take precedence over the stored `~/.msde/auth.json` file.
+
+`MERIGO_DEV_PACKAGE_DIR`: The folder where the project is initialized. Useful if you have multiple project locations. Takes precedence over `~/.msde/config.json`.
+
+`MERIGO_NOWARN_INIT`: If you have no project initialized, the tool prints a warning by default. Set this variable to a non-empty string to disable printing that warning. 
+
 ### Requires
   - docker compose >=2.20
 

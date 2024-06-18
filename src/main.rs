@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context as _;
 use clap::Parser;
 use clap_complete::{generate, shells::Shell};
-use dialoguer::{Confirm, Input};
+use dialoguer::{Confirm, Input, Password};
 use docker_api::{
     opts::{ContainerListOpts, ContainerStopOpts},
     Docker,
@@ -19,12 +19,21 @@ use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 #[cfg(all(feature = "local_auth", debug_assertions))]
-use msde_cli::{central_service::MerigoApiClient, local_auth, env::Authorization};
+use msde_cli::local_auth;
 use msde_cli::{
-    cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Context, Feature}, game::{
+    central_service::MerigoApiClient, env::Authorization,
+    cli::{Command, Commands, Target, Web3Kind},
+    compose::Pipeline,
+    env::{Context, Feature},
+    game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
-    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON, REPOS_AND_IMAGES, USER
+    },
+    hooks::{execute_all, Hooks},
+    init::ensure_valid_project_path,
+    utils::{self, resolve_features},
+    DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON,
+    REPOS_AND_IMAGES, USER,
 };
 
 use secrecy::{ExposeSecret, Secret};
@@ -122,17 +131,22 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::UpdateBeamFiles {
             version, no_verify, ..
         }) => {
-            let version = version.or_else(|| {
-                if let Ok(Some(metadata)) = ctx.run_project_checks(self_version) {
-                    if let Some(Ok(target_msde_version)) = metadata.target_msde_version.map(|s| semver::Version::parse(&s)) {
-                        Some(target_msde_version)
+            let version = version
+                .or_else(|| {
+                    if let Ok(Some(metadata)) = ctx.run_project_checks(self_version) {
+                        if let Some(Ok(target_msde_version)) = metadata
+                            .target_msde_version
+                            .map(|s| semver::Version::parse(&s))
+                        {
+                            Some(target_msde_version)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
-                } else {
-                    None
-                }
-            }).unwrap_or(upstream_version);
+                })
+                .unwrap_or(upstream_version);
 
             msde_cli::updater::update_beam_files(&ctx, version.clone(), no_verify).await?;
             tracing::info!("BEAM files updated to version `{version}`.");
@@ -140,10 +154,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::VerifyBeamFiles { version, path }) => {
             let version = version.unwrap_or(upstream_version);
 
-            let Some(path) = path.or_else(|| {
-                ctx.msde_dir
-                    .map(|msde_dir| msde_dir.join(MERIGO_EXTENSION))
-            }) else {
+            let Some(path) =
+                path.or_else(|| ctx.msde_dir.map(|msde_dir| msde_dir.join(MERIGO_EXTENSION)))
+            else {
                 anyhow::bail!(
                     "No path found to merigo extension. Please specify the --path argument."
                 )
@@ -169,8 +182,8 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Some(Commands::BuildCache { duration }) => {
-            let credentials =
-                try_legacy_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
+            let credentials = try_legacy_login(&ctx)
+                .context("No credentials found, run `msde_cli login` first.")?;
             create_index(
                 &ctx,
                 &client,
@@ -248,8 +261,8 @@ async fn main() -> anyhow::Result<()> {
             println!("There shouldn't be any running containers now.");
         }
         Some(Commands::Pull { target, version }) => {
-            let credentials =
-                try_legacy_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
+            let credentials = try_legacy_login(&ctx)
+                .context("No credentials found, run `msde_cli login` first.")?;
 
             let targets = target.map(|t| vec![t]).unwrap_or_else(|| {
                 vec![
@@ -749,10 +762,25 @@ async fn main() -> anyhow::Result<()> {
             let token = client.register(&name).await?;
             println!("Token is {token}");
         }
-        #[cfg(all(feature = "local_auth", debug_assertions))]
-        Some(Commands::LoginDev { token }) => {
+        Some(Commands::Login { token, token_stdin }) => {
+            // TODO: Read from a pipe or redirect.
+            let token = if token_stdin {
+                    Password::with_theme(&theme)
+                        .with_prompt("Paste your token")
+                        .interact()
+                        .unwrap()
+            } else {
+                token.context("Token is required")?
+            };
+            #[cfg(all(feature = "local_auth", debug_assertions))]
             let client = MerigoApiClient::new(
                 String::from("http://localhost:8765"),
+                None,
+                self_version.to_string(),
+            );
+            #[cfg(not(debug_assertions))]
+            let client = MerigoApiClient::new(
+                String::from("https://production_url.com"),
                 None,
                 self_version.to_string(),
             );

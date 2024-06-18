@@ -8,7 +8,7 @@ homepage = "https://github.com/ptrskay3/msde-cli"
 authors = ["Merigo Team"]
 
 [dependencies]
-clap = { version = "4.4.4", features = ["derive"] }
+clap = { version = "4.4.4", features = ["derive", "env"] }
 sysinfo = "0.30.5"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
@@ -33,7 +33,7 @@ clap_complete = "4.5.2"
 webbrowser = "1.0.0"
 flate2 = "1.0"
 tar = "0.4"
-dialoguer = "0.11.0"
+dialoguer = { version = "0.11.0", features = ["password"] }
 console = "0.15.8"
 indicatif = { version = "0.17.8", features = ["tokio"] }
 strum = { version = "0.26", features = ["derive"] }

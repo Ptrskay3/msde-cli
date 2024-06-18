@@ -66,10 +66,18 @@ impl Command {
 pub enum Commands {
     #[cfg(all(feature = "local_auth", debug_assertions))]
     RunAuthServer,
-    #[cfg(all(feature = "local_auth", debug_assertions))]
-    LoginDev {
-        #[arg(short, long)]
-        token: String,
+    Login {
+        #[arg(
+            short,
+            long,
+            conflicts_with = "token_stdin",
+            required_unless_present = "token_stdin",
+            env = "MERIGO_TOKEN"
+        )]
+        token: Option<String>,
+
+        #[arg(long)]
+        token_stdin: bool,
     },
     #[cfg(all(feature = "local_auth", debug_assertions))]
     Register {

@@ -12,7 +12,6 @@
 
 use std::{collections::HashMap, time::Duration};
 
-#[cfg(all(feature = "local_auth", debug_assertions))]
 use anyhow::Context;
 use reqwest::header::{HeaderMap, HeaderName};
 
@@ -75,6 +74,46 @@ impl MerigoApiClient {
     }
 
     #[cfg(all(feature = "local_auth", debug_assertions))]
+    pub async fn login(&self, token: &str) -> anyhow::Result<String> {
+        let url = format!("{}/auth", self.api_url);
+
+        #[derive(serde::Deserialize)]
+        struct LoginResponse {
+            name: String,
+        }
+
+        #[derive(serde::Deserialize, Debug)]
+        struct ErrorResponse {
+            error: String,
+        }
+
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Response {
+            Ok(LoginResponse),
+            Error(ErrorResponse),
+        }
+
+        match self
+            .client
+            .get(url)
+            .header(X_ACCESS_TOKEN.clone(), token)
+            .send()
+            .await
+            .context("call endpoint")?
+            .json::<Response>()
+            .await
+            .context("parse body")?
+        {
+            Response::Ok(l) => Ok(l.name),
+            Response::Error(e) => {
+                tracing::error!(?e, "unauthorized");
+                anyhow::bail!("unauthorized")
+            }
+        }
+    }
+    // TODO: production
+    #[cfg(not(debug_assertions))]
     pub async fn login(&self, token: &str) -> anyhow::Result<String> {
         let url = format!("{}/auth", self.api_url);
 

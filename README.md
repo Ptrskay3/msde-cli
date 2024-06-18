@@ -26,7 +26,7 @@ This is a list of existing environment variables that alter the behavior of the 
 
 `MERIGO_UPSTREAM_VERSION`: The current upstream version of the siab_app when this tool was built. This is a compile-time variable.
 
-`MERIGO_TOKEN`: The token used for authentication. Currently only used for the `login` command, but all subcommand will accept this in the future. It'll take precedence over the stored `~/.msde/auth.json` file.
+`MERIGO_TOKEN`: The token used for authentication. Currently only used for the `login` command, but all subcommands will accept this in the future. It'll take precedence over the stored `~/.msde/auth.json` file.
 
 `MERIGO_DEV_PACKAGE_DIR`: The folder where the project is initialized. Useful if you have multiple project locations. Takes precedence over `~/.msde/config.json`.
 

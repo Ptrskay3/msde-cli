@@ -1,4 +1,5 @@
 use md5::{Digest, Md5};
+use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
@@ -146,8 +147,7 @@ impl PackageUpgradePipeline {
         Self {
             steps: vec![PackageUpgradeStep::Auto(Auto {
                 f: Box::new(move |ctx: &Context| -> anyhow::Result<()> {
-                    ctx.upgrade_package_local_version(self_version)?;
-                    Ok(())
+                    ctx.upgrade_package_local_version(self_version)
                 }),
             })],
         }
@@ -175,7 +175,9 @@ impl PackageUpgradePipeline {
 }
 
 pub enum PackageUpgradeStep {
+    // Steps that will be performed, because it's safe and easy to do.
     Auto(Auto),
+    // Steps that will be displayed, because it can't be done automatically by this tool
     Manual(Manual),
 }
 
@@ -220,22 +222,21 @@ pub fn matrix(
     ctx: &Context,
 ) -> anyhow::Result<()> {
     match current.cmp(&project) {
-        std::cmp::Ordering::Less => {
+        Ordering::Less => {
             tracing::info!("You're trying to downgrade the project. Consider installing an older version of `msde-cli`.");
             Ok(())
         }
-        std::cmp::Ordering::Equal => {
+        Ordering::Equal => {
             tracing::info!("Up to date.");
             Ok(())
         }
-        std::cmp::Ordering::Greater => {
+        Ordering::Greater => {
             // Actually perform the upgrade steps.
-            // TODO: This is just an example.
-            let pipeline = PackageUpgradePipeline::with_default_version_writer(current.clone());
-            pipeline.run(ctx)?;
+            // FIXME: What about transitive upgrades? As we release more versions, this here will grow exponentially..
             match (current, project) {
                 (c, p) => {
-                    tracing::info!("No upgrade steps defined (current is {c}, project is {p})")
+                    tracing::info!("No specific upgrade steps defined, writing version to metadata.json (current is {c}, project is {p})");
+                    PackageUpgradePipeline::with_default_version_writer(c).run(ctx)?;
                 }
             }
             Ok(())

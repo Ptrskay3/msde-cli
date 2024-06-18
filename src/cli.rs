@@ -53,7 +53,7 @@ impl Command {
                     | Commands::Clean { .. }
                     | Commands::Init { .. }
                     | Commands::BuildCache { .. }
-                    | Commands::Login { .. }
+                    | Commands::LegacyLogin { .. }
                     | Commands::Containers { .. }
                     | Commands::UpdateBeamFiles { .. }
                     | Commands::VerifyBeamFiles { .. }
@@ -387,7 +387,7 @@ pub enum Commands {
         #[command(subcommand)]
         target: Target,
     },
-    Login {
+    LegacyLogin {
         // The key used for GHCR authentication.
         #[arg(short, long)]
         ghcr_key: Option<String>,

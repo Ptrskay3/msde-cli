@@ -118,32 +118,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::trace!("connected");
     let client = reqwest::Client::new();
 
-    if !&cmd.no_cache {
-        match (
-            cmd.should_ignore_credentials(),
-            std::fs::File::open(&ctx.config_dir.join("index.json")),
-        ) {
-            (true, _) => {}
-            (_, Ok(content)) => {
-                let reader = BufReader::new(content);
-                let index: Index = serde_json::from_reader(reader)?;
-
-                if time::OffsetDateTime::now_utc().unix_timestamp() > index.valid_until {
-                    tracing::debug!("image registry cache is too old, rebuilding now.");
-                    let credentials = try_login(&ctx)
-                        .context("No credentials found, run `msde_cli login` first.")?;
-                    create_index(&ctx, &client, DEFAULT_DURATION, credentials).await?;
-                }
-            }
-            (_, Err(_)) => {
-                tracing::debug!("image registry cache is not built, building now.");
-                let credentials =
-                    try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-                create_index(&ctx, &client, DEFAULT_DURATION, credentials).await?;
-            }
-        }
-    }
-
     match cmd.command {
         Some(Commands::UpdateBeamFiles {
             version, no_verify, ..
@@ -196,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::BuildCache { duration }) => {
             let credentials =
-                try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
+                try_legacy_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
             create_index(
                 &ctx,
                 &client,
@@ -275,7 +249,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Pull { target, version }) => {
             let credentials =
-                try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
+                try_legacy_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
 
             let targets = target.map(|t| vec![t]).unwrap_or_else(|| {
                 vec![
@@ -316,15 +290,14 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(-1);
             }
         }
-        Some(Commands::Login {
+        Some(Commands::LegacyLogin {
             ghcr_key,
             pull_key,
             file,
         }) => {
-            login(&ctx, ghcr_key, pull_key, file)?;
+            legacy_login(&ctx, ghcr_key, pull_key, file)?;
         }
         Some(Commands::Clean { always_yes }) => {
-            // TODO: Also remove the msde_dir if set?
             println!("About to remove {:?}", ctx.config_dir);
 
             let proceed = if always_yes {
@@ -984,7 +957,7 @@ struct UnsafeCredentials {
     pull_key: String,
 }
 
-fn login(
+fn legacy_login(
     context: &msde_cli::env::Context,
     ghcr_key: Option<String>,
     pull_key: Option<String>,
@@ -1009,7 +982,7 @@ fn login(
     Ok(())
 }
 
-fn try_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
+fn try_legacy_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
     let f = std::fs::read_to_string(ctx.config_dir.join("credentials.json"))?;
     let credentials: SecretCredentials =
         serde_json::from_str(&f).context("invalid credentials file")?;

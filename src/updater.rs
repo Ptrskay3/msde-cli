@@ -133,6 +133,112 @@ pub async fn update_beam_files(
     Ok(())
 }
 
-pub fn matrix(_current: semver::Version, _project: semver::Version) {
-    todo!()
+pub struct PackageUpgradePipeline {
+    pub steps: Vec<PackageUpgradeStep>,
+}
+
+impl PackageUpgradePipeline {
+    pub fn empty() -> Self {
+        Self { steps: Vec::new() }
+    }
+
+    pub fn with_default_version_writer(self_version: semver::Version) -> Self {
+        Self {
+            steps: vec![PackageUpgradeStep::Auto(Auto {
+                f: Box::new(move |ctx: &Context| -> anyhow::Result<()> {
+                    ctx.upgrade_package_local_version(self_version)?;
+                    Ok(())
+                }),
+            })],
+        }
+    }
+
+    pub fn run(self, context: &Context) -> anyhow::Result<()> {
+        for step in self.steps {
+            step.perform(context)?;
+        }
+        Ok(())
+    }
+
+    pub fn push_auto<F>(&mut self, f: F)
+    where
+        F: FnOnce(&Context) -> anyhow::Result<()> + 'static,
+    {
+        self.steps
+            .push(PackageUpgradeStep::Auto(Auto { f: Box::new(f) }));
+    }
+
+    pub fn push_manual(&mut self, display_msg: String) {
+        self.steps
+            .push(PackageUpgradeStep::Manual(Manual { display_msg }))
+    }
+}
+
+pub enum PackageUpgradeStep {
+    Auto(Auto),
+    Manual(Manual),
+}
+
+impl PerformStep for PackageUpgradeStep {
+    fn perform(self, context: &Context) -> anyhow::Result<()> {
+        match self {
+            PackageUpgradeStep::Auto(a) => a.perform(context),
+            PackageUpgradeStep::Manual(m) => m.perform(context),
+        }
+    }
+}
+
+pub trait PerformStep {
+    fn perform(self, context: &Context) -> anyhow::Result<()>;
+}
+
+pub struct Auto {
+    f: Box<dyn FnOnce(&Context) -> anyhow::Result<()>>,
+}
+
+impl PerformStep for Auto {
+    fn perform(self, context: &Context) -> anyhow::Result<()> {
+        (self.f)(context)?;
+        Ok(())
+    }
+}
+
+pub struct Manual {
+    display_msg: String,
+}
+
+impl PerformStep for Manual {
+    fn perform(self, _context: &Context) -> anyhow::Result<()> {
+        println!("{}", self.display_msg);
+        Ok(())
+    }
+}
+
+pub fn matrix(
+    current: semver::Version,
+    project: semver::Version,
+    ctx: &Context,
+) -> anyhow::Result<()> {
+    match current.cmp(&project) {
+        std::cmp::Ordering::Less => {
+            tracing::info!("You're trying to downgrade the project. Consider installing an older version of `msde-cli`.");
+            Ok(())
+        }
+        std::cmp::Ordering::Equal => {
+            tracing::info!("Up to date.");
+            Ok(())
+        }
+        std::cmp::Ordering::Greater => {
+            // Actually perform the upgrade steps.
+            // TODO: This is just an example.
+            let pipeline = PackageUpgradePipeline::with_default_version_writer(current.clone());
+            pipeline.run(ctx)?;
+            match (current, project) {
+                (c, p) => {
+                    tracing::info!("No upgrade steps defined (current is {c}, project is {p})")
+                }
+            }
+            Ok(())
+        }
+    }
 }

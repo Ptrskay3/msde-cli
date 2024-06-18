@@ -21,19 +21,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 #[cfg(all(feature = "local_auth", debug_assertions))]
 use msde_cli::local_auth;
 use msde_cli::{
-    central_service::MerigoApiClient, env::Authorization,
-    cli::{Command, Commands, Target, Web3Kind},
-    compose::Pipeline,
-    env::{Context, Feature},
-    game::{
+    central_service::MerigoApiClient, cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Authorization, Context, Feature}, game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
-    },
-    hooks::{execute_all, Hooks},
-    init::ensure_valid_project_path,
-    utils::{self, resolve_features},
-    DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON,
-    REPOS_AND_IMAGES, USER,
+    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, updater, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON, REPOS_AND_IMAGES, USER
 };
 
 use secrecy::{ExposeSecret, Secret};
@@ -660,15 +651,11 @@ async fn main() -> anyhow::Result<()> {
                 .context("metadata.json file is invalid. Please rerun `msde_cli init`.")?;
             // 2. Compare the current self_version and the metadata's version.
             let project_self_version = semver::Version::parse(&project_self_version).unwrap();
-            println!(
-                "project self version {project_self_version:?} | self version {self_version:?}"
-            );
-            // 3. Lookup the migration matrix function (which is TBD.).
+            // 3. Lookup the migration matrix function
+            updater::matrix(self_version, project_self_version, &ctx)?;
             // 4. Write the changes to disk, or display migration steps that need to be done manually.
             // 5. Update the metadata.json.
             // 6. Optionally display a warning message if the current project is not using the right self_version.
-            tracing::info!("Automatic update done.");
-            todo!();
         }
         Some(Commands::GenerateCompletions { shell }) => {
             generate(

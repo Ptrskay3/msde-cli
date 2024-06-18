@@ -408,6 +408,38 @@ impl Context {
         Ok(())
     }
 
+    pub fn upgrade_package_local_version(
+        &self,
+        self_version: semver::Version,
+    ) -> anyhow::Result<()> {
+        let msde_dir = self
+            .msde_dir
+            .as_ref()
+            .context("Package location is unknown")?;
+        let config_file = msde_dir.join(METADATA_JSON);
+        let mut f = std::fs::OpenOptions::new().read(true).open(&config_file)?;
+
+        let mut buf = String::new();
+        f.read_to_string(&mut buf)?;
+        let current: PackageLocalConfig = serde_json::from_str(&buf)?;
+
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&config_file)?;
+        let mut writer = std::io::BufWriter::new(f);
+
+        serde_json::to_writer(
+            &mut writer,
+            &PackageLocalConfig {
+                self_version: self_version.to_string(),
+                ..current
+            },
+        )?;
+        writer.flush()?;
+        Ok(())
+    }
+
     pub fn set_project_path(&mut self, project_path: impl AsRef<Path>) {
         self.msde_dir = Some(project_path.as_ref().to_path_buf())
     }

@@ -256,6 +256,7 @@ pub fn consecutive_upgrade(
         // There're two built-in steps that you don't need to care about:
         //   - The unpacking of the `package` folder - this will be upgraded on the user's machine.
         //   - The upgrade of the `metadata.json` file in their project folder.
+        ((0, 14), (0, 15)) => Ok(None),
         ((0, 13), (0, 14)) => {
             let mut pipeline = PackageUpgradePipeline::empty();
             pipeline.push_auto(|_ctx: &Context| -> anyhow::Result<()> {

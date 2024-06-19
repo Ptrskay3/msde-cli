@@ -21,10 +21,20 @@ use indicatif::{ProgressBar, ProgressStyle};
 #[cfg(all(feature = "local_auth", debug_assertions))]
 use msde_cli::local_auth;
 use msde_cli::{
-    central_service::MerigoApiClient, cli::{Command, Commands, Target, Web3Kind}, compose::Pipeline, env::{Authorization, Context, Feature}, game::{
+    central_service::MerigoApiClient,
+    cli::{Command, Commands, Target, Web3Kind},
+    compose::Pipeline,
+    env::{Authorization, Context, Feature},
+    game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
-    }, hooks::{execute_all, Hooks}, init::ensure_valid_project_path, updater, utils::{self, resolve_features}, DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON, REPOS_AND_IMAGES, USER
+    },
+    hooks::{execute_all, Hooks},
+    init::ensure_valid_project_path,
+    updater,
+    utils::{self, resolve_features},
+    DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON,
+    REPOS_AND_IMAGES, USER,
 };
 
 use secrecy::{ExposeSecret, Secret};
@@ -619,7 +629,11 @@ async fn main() -> anyhow::Result<()> {
                 tracing::warn!("Passing --features without --pull-images has no effect.")
             }
         }
-        Some(Commands::UpgradeProject { path }) => {
+        Some(Commands::UpgradeProject {
+            path,
+            manual_only,
+            allow_overwrite,
+        }) => {
             // Plan:
             // 1. Obtain the project path, and find metadata.json
             let project_path = path
@@ -652,7 +666,26 @@ async fn main() -> anyhow::Result<()> {
             // 2. Compare the current self_version and the metadata's version.
             let project_self_version = semver::Version::parse(&project_self_version).unwrap();
             // 3. Lookup the migration matrix function
-            updater::matrix(self_version, project_self_version, &ctx)?;
+
+            let proceed = if allow_overwrite {
+                true
+            } else {
+                let prompt = format!("Upgrading will potentially overwrite all files in: {}\nDo you wish to continue?", project_path.join("docker").display());
+                dialoguer::Confirm::with_theme(&theme)
+                    .with_prompt(prompt)
+                    .wait_for_newline(true)
+                    .default(false)
+                    .show_default(true)
+                    .report(true)
+                    .interact()?
+            };
+            if !proceed {
+                tracing::info!("User chose to exit.");
+                return Ok(());
+            }
+            // TODO: This doesn't increase the target_msde_version.
+            // also TODO: Display a prompt what will be overwritten.
+            updater::upgrade_project(self_version, project_self_version, &ctx, manual_only)?;
             // 4. Write the changes to disk, or display migration steps that need to be done manually.
             // 5. Update the metadata.json.
             // 6. Optionally display a warning message if the current project is not using the right self_version.
@@ -752,26 +785,28 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Login { token, token_stdin }) => {
             // TODO: Read from a pipe or redirect.
             let token = if token_stdin {
-                    Password::with_theme(&theme)
-                        .with_prompt("Paste your token")
-                        .interact()
-                        .unwrap()
+                Password::with_theme(&theme)
+                    .with_prompt("Paste your token")
+                    .interact()
+                    .unwrap()
             } else {
                 token.context("Token is required")?
             };
             #[cfg(all(feature = "local_auth", debug_assertions))]
-            let client = MerigoApiClient::new(
-                std::env::var("MERIGO_AUTH_URL").unwrap_or_else(|_| String::from("http://localhost:8765")),
+            let merigo_client = MerigoApiClient::new(
+                std::env::var("MERIGO_AUTH_URL")
+                    .unwrap_or_else(|_| String::from("http://localhost:8765")),
                 None,
                 self_version.to_string(),
             );
             #[cfg(not(debug_assertions))]
-            let client = MerigoApiClient::new(
-                std::env::var("MERIGO_AUTH_URL").unwrap_or_else(|_| String::from("https://production_url.com")),
+            let merigo_client = MerigoApiClient::new(
+                std::env::var("MERIGO_AUTH_URL")
+                    .unwrap_or_else(|_| String::from("https://production_url.com")),
                 None,
                 self_version.to_string(),
             );
-            let name = client.login(&token).await?;
+            let name = merigo_client.login(&token).await?;
             let auth = ctx.config_dir.join("auth.json");
             let f = std::fs::OpenOptions::new()
                 .create(true)

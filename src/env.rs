@@ -24,6 +24,7 @@ use crate::{
     hooks::Hooks,
     CONFIG_JSON, MERIGO_UPSTREAM_VERSION, METADATA_JSON,
 };
+use flate2::bufread::GzDecoder;
 
 pub fn home() -> anyhow::Result<PathBuf> {
     match home::home_dir() {
@@ -437,6 +438,47 @@ impl Context {
             },
         )?;
         writer.flush()?;
+        Ok(())
+    }
+
+    fn save_stages_yml(msde_dir: impl AsRef<Path>) -> anyhow::Result<String> {
+        let stages_file = msde_dir.as_ref().join("games/stages.yml");
+        let mut buf = String::new();
+        let mut f = std::fs::File::open(stages_file)?;
+        f.read_to_string(&mut buf)?;
+        Ok(buf)
+    }
+
+    fn restore_stages_yml(msde_dir: impl AsRef<Path>, content: String) -> anyhow::Result<()> {
+        let stages_file = msde_dir.as_ref().join("games/stages.yml");
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(stages_file)?;
+        let mut writer = std::io::BufWriter::new(f);
+        writer.write_all(content.as_bytes())?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    pub fn unpack_project_files(&self) -> anyhow::Result<()> {
+        let Some(msde_dir) = self.msde_dir.as_ref() else {
+            anyhow::bail!("project must be set")
+        };
+        // Note: A drop guard may be safer, but that's an overkill I think.
+        let stages_yml = Self::save_stages_yml(msde_dir)
+            .context("failed to save games/stages.yml file content")?;
+        let mut archive = tar::Archive::new(GzDecoder::new(crate::PACKAGE));
+
+        archive.unpack(&msde_dir).with_context(|| {
+            format!(
+                "Failed to upgrade project at directory `{}`",
+                msde_dir.display()
+            )
+        })?;
+
+        Self::restore_stages_yml(msde_dir, stages_yml)?;
+
         Ok(())
     }
 

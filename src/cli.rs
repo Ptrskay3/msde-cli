@@ -149,9 +149,19 @@ pub enum Commands {
         #[arg(short, long)]
         shell: Option<Shell>,
     },
+    /// Upgrade the active project that was generated with an earlier version of this tool.
     UpgradeProject {
+        /// The path of the project. It's automatically detected, but use this option to override.
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
+
+        /// Only display manual steps, do not perform any action. This is useful if the user missed the printed instructions.
+        #[arg(short, long)]
+        manual_only: bool,
+
+        /// Proceed without asking for further confirmation.
+        #[arg(short, long)]
+        allow_overwrite: bool,
     },
     /// Start the services, and wait for the MSDE to be healthy.
     Up {
@@ -191,7 +201,7 @@ pub enum Commands {
     },
     /// Runs the target service(s), imports all valid games from the project folder.
     /// It the same effect as the following commands combined:
-    /// 
+    ///
     /// `msde-cli run-hooks --pre && msde-cli up [args] && msde-cli import-games && msde-cli run-hooks --post`
     ///
     /// ## Hooks

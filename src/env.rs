@@ -8,6 +8,7 @@
 
 use anyhow::Context as _;
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
@@ -21,7 +22,9 @@ use crate::{
         DOCKER_COMPOSE_BOT, DOCKER_COMPOSE_METRICS, DOCKER_COMPOSE_OTEL, DOCKER_COMPOSE_WEB3,
     },
     hooks::Hooks,
+    CONFIG_JSON, MERIGO_UPSTREAM_VERSION, METADATA_JSON,
 };
+use flate2::bufread::GzDecoder;
 
 pub fn home() -> anyhow::Result<PathBuf> {
     match home::home_dir() {
@@ -244,9 +247,10 @@ pub struct PackageLocalConfig {
     pub hooks: Option<Hooks>,
 }
 
-// TODO: fields
-#[derive(Debug)]
-pub struct Authorization;
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Authorization {
+    pub token: String,
+}
 
 impl Context {
     pub fn from_env() -> anyhow::Result<Self> {
@@ -259,12 +263,26 @@ impl Context {
             )
         })?;
         let config = {
-            let config_file = config_dir.join("config.json");
+            let config_file = config_dir.join(CONFIG_JSON);
             if let Ok(f) = fs::read_to_string(config_file) {
                 match serde_json::from_str(&f) {
                     Ok(config) => Some(config),
                     Err(e) => {
                         tracing::debug!(error = %e, "config file seems to be broken.");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+        let authorization = {
+            let auth_file = config_dir.join("auth.json");
+            if let Ok(f) = fs::read_to_string(auth_file) {
+                match serde_json::from_str(&f) {
+                    Ok(config) => Some(config),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "auth file seems to be broken.");
                         None
                     }
                 }
@@ -279,7 +297,7 @@ impl Context {
             config_dir,
             msde_dir,
             version: None,
-            authorization: None,
+            authorization,
             config,
         })
     }
@@ -294,7 +312,7 @@ impl Context {
 
     // If the file is broken (maybe it uses the older scheme) this function handles that migration part too.
     pub fn write_profiles(&self, name: String, features: Vec<Feature>) -> anyhow::Result<()> {
-        let config_file = self.config_dir.join("config.json");
+        let config_file = self.config_dir.join(CONFIG_JSON);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .read(true)
@@ -340,7 +358,7 @@ impl Context {
 
     pub fn write_config(&self, project_path: PathBuf) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
-        let config_file = self.config_dir.join("config.json");
+        let config_file = self.config_dir.join(CONFIG_JSON);
         let f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -366,7 +384,7 @@ impl Context {
             .as_ref()
             .context("Package location is unknown")?;
         std::fs::create_dir_all(msde_dir)?;
-        let config_file = msde_dir.join("metadata.json");
+        let config_file = msde_dir.join(METADATA_JSON);
         let f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -378,13 +396,89 @@ impl Context {
         serde_json::to_writer(
             &mut writer,
             &PackageLocalConfig {
-                target_msde_version: Some("3.10.0".into()), // TODO: Do not hardcode
+                target_msde_version: Some(MERIGO_UPSTREAM_VERSION.to_string()),
                 self_version: self_version.to_string(),
                 timestamp: time::OffsetDateTime::now_utc().unix_timestamp(),
-                hooks: None,
+                hooks: Some(Hooks {
+                    pre_run: vec![],
+                    post_run: vec![],
+                }),
             },
         )?;
         writer.flush()?;
+        Ok(())
+    }
+
+    pub fn upgrade_package_local_version(
+        &self,
+        self_version: semver::Version,
+    ) -> anyhow::Result<()> {
+        let msde_dir = self
+            .msde_dir
+            .as_ref()
+            .context("Package location is unknown")?;
+        let config_file = msde_dir.join(METADATA_JSON);
+        let mut f = std::fs::OpenOptions::new().read(true).open(&config_file)?;
+
+        let mut buf = String::new();
+        f.read_to_string(&mut buf)?;
+        let current: PackageLocalConfig = serde_json::from_str(&buf)?;
+
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&config_file)?;
+        let mut writer = std::io::BufWriter::new(f);
+
+        serde_json::to_writer(
+            &mut writer,
+            &PackageLocalConfig {
+                self_version: self_version.to_string(),
+                ..current
+            },
+        )?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn save_stages_yml(msde_dir: impl AsRef<Path>) -> anyhow::Result<String> {
+        let stages_file = msde_dir.as_ref().join("games/stages.yml");
+        let mut buf = String::new();
+        let mut f = std::fs::File::open(stages_file)?;
+        f.read_to_string(&mut buf)?;
+        Ok(buf)
+    }
+
+    fn restore_stages_yml(msde_dir: impl AsRef<Path>, content: String) -> anyhow::Result<()> {
+        let stages_file = msde_dir.as_ref().join("games/stages.yml");
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(stages_file)?;
+        let mut writer = std::io::BufWriter::new(f);
+        writer.write_all(content.as_bytes())?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    pub fn unpack_project_files(&self) -> anyhow::Result<()> {
+        let Some(msde_dir) = self.msde_dir.as_ref() else {
+            anyhow::bail!("project must be set")
+        };
+        // Note: A drop guard may be safer, but that's an overkill I think.
+        let stages_yml = Self::save_stages_yml(msde_dir)
+            .context("failed to save games/stages.yml file content")?;
+        let mut archive = tar::Archive::new(GzDecoder::new(crate::PACKAGE));
+
+        archive.unpack(&msde_dir).with_context(|| {
+            format!(
+                "Failed to upgrade project at directory `{}`",
+                msde_dir.display()
+            )
+        })?;
+
+        Self::restore_stages_yml(msde_dir, stages_yml)?;
+
         Ok(())
     }
 
@@ -392,6 +486,9 @@ impl Context {
         self.msde_dir = Some(project_path.as_ref().to_path_buf())
     }
 
+    // This is used in too many places, so probably don't print errors from here.
+    // TODO: This is doing too much all at once: we'll need a function that only tries to parse the PackageLocalConfig, and another
+    // to run the checks against that separately.
     pub fn run_project_checks(
         &self,
         self_version: semver::Version,
@@ -399,7 +496,7 @@ impl Context {
         let Some(msde_dir) = self.msde_dir.as_ref() else {
             return Ok(None);
         };
-        let metadata_file = msde_dir.join("./metadata.json");
+        let metadata_file = msde_dir.join(METADATA_JSON);
 
         let f = fs::read_to_string(metadata_file)?;
 

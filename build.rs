@@ -17,6 +17,4 @@ fn main() {
 
     println!("cargo:rustc-env=PACKAGE_COMPRESSED_FILE=../compressed_package.tar.gz");
     println!("cargo:rustc-env=TEMPLATE_COMPRESSED_FILE=../compressed_template.tar.gz");
-    // TODO: Read this from somewhere visible, like a .env or a version.txt, or get dynamically?
-    println!("cargo:rustc-env=MERIGO_UPSTREAM_VERSION=3.10.0")
 }

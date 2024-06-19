@@ -1,0 +1,3 @@
+[env]
+# This is the current stable version of the siab_app. Most command will default to this version, if it's not exactly given.
+MERIGO_UPSTREAM_VERSION = "3.10.0"

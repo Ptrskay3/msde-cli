@@ -53,7 +53,7 @@ impl Command {
                     | Commands::Clean { .. }
                     | Commands::Init { .. }
                     | Commands::BuildCache { .. }
-                    | Commands::Login { .. }
+                    | Commands::LegacyLogin { .. }
                     | Commands::Containers { .. }
                     | Commands::UpdateBeamFiles { .. }
                     | Commands::VerifyBeamFiles { .. }
@@ -64,6 +64,26 @@ impl Command {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    #[cfg(all(feature = "local_auth", debug_assertions))]
+    RunAuthServer,
+    Login {
+        #[arg(
+            short,
+            long,
+            conflicts_with = "token_stdin",
+            required_unless_present = "token_stdin",
+            env = "MERIGO_TOKEN"
+        )]
+        token: Option<String>,
+
+        #[arg(long)]
+        token_stdin: bool,
+    },
+    #[cfg(all(feature = "local_auth", debug_assertions))]
+    Register {
+        #[arg(short, long)]
+        name: String,
+    },
     /// Create and register a new game from the default template.
     CreateGame {
         /// The name of the game.
@@ -129,9 +149,19 @@ pub enum Commands {
         #[arg(short, long)]
         shell: Option<Shell>,
     },
+    /// Upgrade the active project that was generated with an earlier version of this tool.
     UpgradeProject {
+        /// The path of the project. It's automatically detected, but use this option to override.
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
+
+        /// Only display manual steps, do not perform any action. This is useful if the user missed the printed instructions.
+        #[arg(short, long)]
+        manual_only: bool,
+
+        /// Proceed without asking for further confirmation.
+        #[arg(short, long)]
+        allow_overwrite: bool,
     },
     /// Start the services, and wait for the MSDE to be healthy.
     Up {
@@ -163,14 +193,16 @@ pub enum Commands {
         #[arg(short, long, conflicts_with = "features")]
         profile: Option<String>,
     },
-    /// Wipe out all config files and folders.
+    /// Wipe out all config files related to this tool.
     Clean {
         /// Continue without asking for further confirmation.
         #[arg(short = 'y', long, action = ArgAction::SetTrue)]
         always_yes: bool,
     },
     /// Runs the target service(s), imports all valid games from the project folder.
-    /// It has roughly the same effect as the `up` and the `import-games` command combined, with the `run-hooks` command.
+    /// It the same effect as the following commands combined:
+    ///
+    /// `msde-cli run-hooks --pre && msde-cli up [args] && msde-cli import-games && msde-cli run-hooks --post`
     ///
     /// ## Hooks
     ///
@@ -342,7 +374,8 @@ pub enum Commands {
         #[arg(short, long)]
         path: Option<std::path::PathBuf>,
     },
-    /// Update the BEAM files.
+    /// Update the BEAM files. `version`, if not given, is determined by the active project `metadata.json`'s version. If that's not present
+    /// either, then the upstream Merigo version is used (only updated when this tool is updated).
     UpdateBeamFiles {
         /// The version of the BEAM files to download.
         #[arg(short, long)]
@@ -374,7 +407,7 @@ pub enum Commands {
         #[command(subcommand)]
         target: Target,
     },
-    Login {
+    LegacyLogin {
         // The key used for GHCR authentication.
         #[arg(short, long)]
         ghcr_key: Option<String>,

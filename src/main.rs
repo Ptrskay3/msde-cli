@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context as _;
 use clap::Parser;
 use clap_complete::{generate, shells::Shell};
-use dialoguer::{Confirm, Input};
+use dialoguer::{Confirm, Input, Password};
 use docker_api::{
     opts::{ContainerListOpts, ContainerStopOpts},
     Docker,
@@ -18,19 +18,25 @@ use docker_api::{
 use flate2::bufread::GzDecoder;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
+#[cfg(all(feature = "local_auth", debug_assertions))]
+use msde_cli::local_auth;
 use msde_cli::{
+    central_service::MerigoApiClient,
     cli::{Command, Commands, Target, Web3Kind},
     compose::Pipeline,
-    env::{Context, Feature},
+    env::{Authorization, Context, Feature},
     game::{
         import_games, PackageConfigEntry, PackageLocalConfig as GamePackageLocalConfig,
         PackageStagesConfig,
     },
     hooks::{execute_all, Hooks},
     init::ensure_valid_project_path,
+    updater,
     utils::{self, resolve_features},
-    DEFAULT_DURATION, LATEST, MERIGO_UPSTREAM_VERSION, REPOS_AND_IMAGES, USER,
+    DEFAULT_DURATION, LATEST, MERIGO_EXTENSION, MERIGO_UPSTREAM_VERSION, METADATA_JSON,
+    REPOS_AND_IMAGES, USER,
 };
+
 use secrecy::{ExposeSecret, Secret};
 use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -122,37 +128,26 @@ async fn main() -> anyhow::Result<()> {
     tracing::trace!("connected");
     let client = reqwest::Client::new();
 
-    if !&cmd.no_cache {
-        match (
-            cmd.should_ignore_credentials(),
-            std::fs::File::open(&ctx.config_dir.join("index.json")),
-        ) {
-            (true, _) => {}
-            (_, Ok(content)) => {
-                let reader = BufReader::new(content);
-                let index: Index = serde_json::from_reader(reader)?;
-
-                if time::OffsetDateTime::now_utc().unix_timestamp() > index.valid_until {
-                    tracing::debug!("image registry cache is too old, rebuilding now.");
-                    let credentials = try_login(&ctx)
-                        .context("No credentials found, run `msde_cli login` first.")?;
-                    create_index(&ctx, &client, DEFAULT_DURATION, credentials).await?;
-                }
-            }
-            (_, Err(_)) => {
-                tracing::debug!("image registry cache is not built, building now.");
-                let credentials =
-                    try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-                create_index(&ctx, &client, DEFAULT_DURATION, credentials).await?;
-            }
-        }
-    }
-
     match cmd.command {
         Some(Commands::UpdateBeamFiles {
             version, no_verify, ..
         }) => {
-            let version = version.unwrap_or(upstream_version);
+            let version = version
+                .or_else(|| {
+                    if let Ok(Some(metadata)) = ctx.run_project_checks(self_version) {
+                        if let Some(Ok(target_msde_version)) = metadata
+                            .target_msde_version
+                            .map(|s| semver::Version::parse(&s))
+                        {
+                            Some(target_msde_version)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(upstream_version);
 
             msde_cli::updater::update_beam_files(&ctx, version.clone(), no_verify).await?;
             tracing::info!("BEAM files updated to version `{version}`.");
@@ -160,10 +155,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::VerifyBeamFiles { version, path }) => {
             let version = version.unwrap_or(upstream_version);
 
-            let Some(path) = path.or_else(|| {
-                ctx.msde_dir
-                    .map(|msde_dir| msde_dir.join("merigo-extension"))
-            }) else {
+            let Some(path) =
+                path.or_else(|| ctx.msde_dir.map(|msde_dir| msde_dir.join(MERIGO_EXTENSION)))
+            else {
                 anyhow::bail!(
                     "No path found to merigo extension. Please specify the --path argument."
                 )
@@ -189,8 +183,8 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Some(Commands::BuildCache { duration }) => {
-            let credentials =
-                try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
+            let credentials = try_legacy_login(&ctx)
+                .context("No credentials found, run `msde_cli legacy-login` first.")?;
             create_index(
                 &ctx,
                 &client,
@@ -268,9 +262,8 @@ async fn main() -> anyhow::Result<()> {
             println!("There shouldn't be any running containers now.");
         }
         Some(Commands::Pull { target, version }) => {
-            let credentials =
-                try_login(&ctx).context("No credentials found, run `msde_cli login` first.")?;
-
+            let credentials = try_legacy_login(&ctx)
+                .context("No credentials found, run `msde_cli legacy-login` first.")?;
             let targets = target.map(|t| vec![t]).unwrap_or_else(|| {
                 vec![
                     Target::Msde {
@@ -289,7 +282,9 @@ async fn main() -> anyhow::Result<()> {
                 ]
             });
             if !&cmd.no_cache {
-                target_version_check(&targets, &ctx)?;
+                if let Err(_) = target_version_check(&targets, &ctx) {
+                    tracing::warn!("missing cache, skipping target version checks");
+                }
             }
             let m = indicatif::MultiProgress::new();
             let mut tasks = vec![];
@@ -310,15 +305,14 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(-1);
             }
         }
-        Some(Commands::Login {
+        Some(Commands::LegacyLogin {
             ghcr_key,
             pull_key,
             file,
         }) => {
-            login(&ctx, ghcr_key, pull_key, file)?;
+            legacy_login(&ctx, ghcr_key, pull_key, file)?;
         }
         Some(Commands::Clean { always_yes }) => {
-            // TODO: Also remove the msde_dir if set?
             println!("About to remove {:?}", ctx.config_dir);
 
             let proceed = if always_yes {
@@ -636,7 +630,11 @@ async fn main() -> anyhow::Result<()> {
                 tracing::warn!("Passing --features without --pull-images has no effect.")
             }
         }
-        Some(Commands::UpgradeProject { path }) => {
+        Some(Commands::UpgradeProject {
+            path,
+            manual_only,
+            allow_overwrite,
+        }) => {
             // Plan:
             // 1. Obtain the project path, and find metadata.json
             let project_path = path
@@ -657,7 +655,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             // TODO: These checks are already implemented elsewhere.
             tracing::debug!(path = %project_path.display(), "Upgrade project at");
-            let config = project_path.join("metadata.json");
+            let config = project_path.join(METADATA_JSON);
             let f = File::open(config)
                 .context("metadata.json file is missing. Please rerun `msde_cli init`.")?;
             let reader = BufReader::new(f);
@@ -668,15 +666,30 @@ async fn main() -> anyhow::Result<()> {
                 .context("metadata.json file is invalid. Please rerun `msde_cli init`.")?;
             // 2. Compare the current self_version and the metadata's version.
             let project_self_version = semver::Version::parse(&project_self_version).unwrap();
-            println!(
-                "project self version {project_self_version:?} | self version {self_version:?}"
-            );
-            // 3. Lookup the migration matrix function (which is TBD.).
+            // 3. Lookup the migration matrix function
+
+            let proceed = if allow_overwrite {
+                true
+            } else {
+                let prompt = format!("Upgrading will potentially overwrite all files in: {}\nDo you wish to continue?", project_path.join("docker").display());
+                dialoguer::Confirm::with_theme(&theme)
+                    .with_prompt(prompt)
+                    .wait_for_newline(true)
+                    .default(false)
+                    .show_default(true)
+                    .report(true)
+                    .interact()?
+            };
+            if !proceed {
+                tracing::info!("User chose to exit.");
+                return Ok(());
+            }
+            // TODO: This doesn't increase the target_msde_version.
+            // also TODO: Display a prompt what will be overwritten.
+            updater::upgrade_project(self_version, project_self_version, &ctx, manual_only)?;
             // 4. Write the changes to disk, or display migration steps that need to be done manually.
             // 5. Update the metadata.json.
             // 6. Optionally display a warning message if the current project is not using the right self_version.
-            tracing::info!("Automatic update done.");
-            todo!();
         }
         Some(Commands::GenerateCompletions { shell }) => {
             generate(
@@ -755,6 +768,56 @@ async fn main() -> anyhow::Result<()> {
             cmd.stderr(Stdio::inherit());
             let mut child = cmd.spawn(&pty.pts()?)?;
             child.wait()?;
+        }
+        #[cfg(all(feature = "local_auth", debug_assertions))]
+        Some(Commands::RunAuthServer) => {
+            local_auth::run_local_auth_server().await?;
+        }
+        #[cfg(all(feature = "local_auth", debug_assertions))]
+        Some(Commands::Register { name }) => {
+            let client = MerigoApiClient::new(
+                String::from("http://localhost:8765"),
+                None,
+                self_version.to_string(),
+            );
+            let token = client.register(&name).await?;
+            println!("Token is {token}");
+        }
+        Some(Commands::Login { token, token_stdin }) => {
+            // TODO: Read from a pipe or redirect.
+            let token = if token_stdin {
+                Password::with_theme(&theme)
+                    .with_prompt("Paste your token")
+                    .interact()
+                    .unwrap()
+            } else {
+                token.context("Token is required")?
+            };
+            #[cfg(all(feature = "local_auth", debug_assertions))]
+            let merigo_client = MerigoApiClient::new(
+                std::env::var("MERIGO_AUTH_URL")
+                    .unwrap_or_else(|_| String::from("http://localhost:8765")),
+                None,
+                self_version.to_string(),
+            );
+            #[cfg(not(debug_assertions))]
+            let merigo_client = MerigoApiClient::new(
+                std::env::var("MERIGO_AUTH_URL")
+                    .unwrap_or_else(|_| String::from("https://production_url.com")),
+                None,
+                self_version.to_string(),
+            );
+            let name = merigo_client.login(&token).await?;
+            let auth = ctx.config_dir.join("auth.json");
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(auth)?;
+            let writer = BufWriter::new(f);
+            serde_json::to_writer(writer, &Authorization { token })?;
+
+            tracing::info!("Authenticated as `{name}`.");
         }
         None => {
             tracing::trace!("No subcommand was passed, starting diagnostic..");
@@ -945,7 +1008,7 @@ struct UnsafeCredentials {
     pull_key: String,
 }
 
-fn login(
+fn legacy_login(
     context: &msde_cli::env::Context,
     ghcr_key: Option<String>,
     pull_key: Option<String>,
@@ -970,7 +1033,7 @@ fn login(
     Ok(())
 }
 
-fn try_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
+fn try_legacy_login(ctx: &msde_cli::env::Context) -> anyhow::Result<SecretCredentials> {
     let f = std::fs::read_to_string(ctx.config_dir.join("credentials.json"))?;
     let credentials: SecretCredentials =
         serde_json::from_str(&f).context("invalid credentials file")?;
@@ -1040,7 +1103,7 @@ async fn create_index(
             .unix_timestamp(),
         content,
     };
-    let file = File::create(&ctx.config_dir.join("index.json"))?;
+    let file = File::create(ctx.config_dir.join("index.json"))?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, &index)?;
     writer.flush()?;
@@ -1179,7 +1242,7 @@ fn progress_bar() -> ProgressBar {
 }
 
 fn target_version_check(targets: &[Target], ctx: &Context) -> anyhow::Result<()> {
-    let file = File::open(&ctx.config_dir.join("index.json"))?;
+    let file = File::open(ctx.config_dir.join("index.json"))?;
     let reader = BufReader::new(file);
     let index: Index = serde_json::from_reader(reader)?;
     for target in targets {

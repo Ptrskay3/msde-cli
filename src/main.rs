@@ -184,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::BuildCache { duration }) => {
             let credentials = try_legacy_login(&ctx)
-                .context("No credentials found, run `msde_cli login` first.")?;
+                .context("No credentials found, run `msde_cli legacy-login` first.")?;
             create_index(
                 &ctx,
                 &client,
@@ -263,8 +263,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Pull { target, version }) => {
             let credentials = try_legacy_login(&ctx)
-                .context("No credentials found, run `msde_cli login` first.")?;
-
+                .context("No credentials found, run `msde_cli legacy-login` first.")?;
             let targets = target.map(|t| vec![t]).unwrap_or_else(|| {
                 vec![
                     Target::Msde {
@@ -283,7 +282,9 @@ async fn main() -> anyhow::Result<()> {
                 ]
             });
             if !&cmd.no_cache {
-                target_version_check(&targets, &ctx)?;
+                if let Err(_) = target_version_check(&targets, &ctx) {
+                    tracing::warn!("missing cache, skipping target version checks");
+                }
             }
             let m = indicatif::MultiProgress::new();
             let mut tasks = vec![];

@@ -740,7 +740,6 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Invalid target for command")
             };
             let pty = pty_process::blocking::Pty::new()?;
-            pty.resize(pty_process::Size::new(1920, 1080))?;
             let mut cmd = pty_process::blocking::Command::new("docker");
             cmd.args(&["exec", "-it", name, "/bin/bash"]);
             cmd.stdin(Stdio::inherit());
